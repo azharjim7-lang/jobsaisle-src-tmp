@@ -1,0 +1,93 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { colors } from '../lib/colors';
+
+export default function SkillsScreen() {
+  const router = useRouter();
+  const [skills, setSkills] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('https://www.jobsaisle.com/api/skills?country=India&limit=100');
+        const d = await r.json();
+        setSkills(d?.skills || []);
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  const filtered = search.trim()
+    ? skills.filter(s => s.skill.toLowerCase().includes(search.trim().toLowerCase()))
+    : skills;
+
+  const maxCount = skills[0]?.jobCount || 1;
+
+  // Color buckets by demand level
+  const colorFor = (count) => {
+    const ratio = count / maxCount;
+    if (ratio > 0.6) return ['rgba(226,192,110,0.18)', colors.gold];
+    if (ratio > 0.3) return ['rgba(52,211,153,0.16)', colors.primary];
+    return ['rgba(99,102,241,0.12)', '#818cf8'];
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: '#fff', lineHeight: 22, marginTop: -2, fontFamily: 'DMSans_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, color: '#fff', fontFamily: 'DMSans_700Bold' }}>Skills in Demand</Text>
+          <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 1, fontFamily: 'DMSans_400Regular' }}>What employers are asking for · India</Text>
+        </View>
+      </View>
+
+      <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search a skill..."
+          placeholderTextColor={colors.textDim}
+          style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 11, fontSize: 13, color: '#fff', fontFamily: 'DMSans_400Regular', marginBottom: 12 }}
+        />
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+      ) : (
+        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+          {filtered.map((s, i) => {
+            const [bg, fg] = colorFor(s.jobCount);
+            const barPct = Math.max(8, Math.round((s.jobCount / maxCount) * 100));
+            return (
+              <TouchableOpacity
+                key={s.skill}
+                onPress={() => router.push({ pathname: '/(tabs)/search', params: { query: s.skill } })}
+                activeOpacity={0.7}
+                style={{ paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <Text style={{ fontSize: 11, color: fg, fontFamily: 'DMSans_700Bold', width: 22 }}>#{i + 1}</Text>
+                    <Text numberOfLines={1} style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_600SemiBold', flex: 1 }}>{s.skill}</Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_500Medium' }}>{s.jobCount.toLocaleString()} jobs</Text>
+                </View>
+                <View style={{ height: 4, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 3, overflow: 'hidden', marginLeft: 30 }}>
+                  <View style={{ height: '100%', width: barPct + '%', backgroundColor: fg, borderRadius: 3 }} />
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+          {filtered.length === 0 && !loading ? (
+            <Text style={{ textAlign: 'center', marginTop: 30, color: colors.textDim, fontSize: 12 }}>No skills match "{search}"</Text>
+          ) : null}
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}

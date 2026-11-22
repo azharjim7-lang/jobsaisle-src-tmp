@@ -1,0 +1,59 @@
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFonts, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
+import { useEffect } from 'react';
+import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+async function persistNotification(notif) {
+  try {
+    const raw = await AsyncStorage.getItem('ja:notifications');
+    const list = raw ? JSON.parse(raw) : [];
+    const req = notif?.request || {};
+    const content = req?.content || {};
+    const entry = {
+      id: req?.identifier || String(Date.now()),
+      title: content?.title || 'Notification',
+      body: content?.body || '',
+      icon: '📣',
+      link: content?.data?.link || null,
+      ts: Date.now(),
+      read: false,
+    };
+    list.unshift(entry);
+    await AsyncStorage.setItem('ja:notifications', JSON.stringify(list.slice(0, 50)));
+  } catch {}
+}
+
+export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold });
+  useEffect(() => {
+    // Listen for notifications while app is foreground
+    const sub1 = Notifications.addNotificationReceivedListener(persistNotification);
+    // Listen for taps on notifications (background/killed)
+    const sub2 = Notifications.addNotificationResponseReceivedListener(response => {
+      persistNotification(response?.notification);
+    });
+    return () => {
+      sub1.remove();
+      sub2.remove();
+    };
+  }, []);
+  // Don't block render on fonts — show app immediately, fonts swap in when ready
+  // (removed: if (!fontsLoaded && !fontError) return null;)
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="dark" />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#FAF8F5' } }} />
+    </SafeAreaProvider>
+  );
+}

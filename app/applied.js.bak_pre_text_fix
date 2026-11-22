@@ -1,0 +1,155 @@
+import { useState, useCallback } from 'react';
+import { View, Text, FlatList, TouchableOpacity, Alert, Image } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { colors } from '../lib/colors';
+import { getApplied, removeApplied, toggleAppliedStatus } from '../lib/storage';
+import { getMyApplications } from '../lib/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const BG = ['rgba(52,211,153,0.12)','rgba(226,192,110,0.12)','rgba(99,102,241,0.12)','rgba(244,114,182,0.12)','rgba(251,146,60,0.12)','rgba(56,189,248,0.12)'];
+
+function timeAgo(t) {
+  if (!t) return '';
+  const days = Math.floor((Date.now() - t) / 86400000);
+  if (days < 1) return 'Today';
+  if (days === 1) return '1d ago';
+  if (days < 7) return days + 'd ago';
+  if (days < 30) return Math.floor(days / 7) + 'w ago';
+  return Math.floor(days / 30) + 'mo ago';
+}
+
+function CompanyIcon({ company }) {
+  if (!company) return null;
+  const domain = company.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+  return <Image source={{ uri: 'https://www.google.com/s2/favicons?domain=' + domain + '&sz=64' }} style={{ width: 22, height: 22, borderRadius: 4 }} resizeMode="contain" />;
+}
+
+export default function AppliedScreen() {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const router = useRouter();
+
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      // Always read local first for instant render
+      const local = await getApplied();
+      setItems(local);
+      setLoaded(true);
+      // Then fetch from server and merge
+      try {
+        const u = await AsyncStorage.getItem('user');
+        if (u) {
+          const parsed = JSON.parse(u);
+          if (parsed?.uid) {
+            const serverApps = await getMyApplications(parsed.uid);
+            // Map server apps to same shape as local
+            const serverEntries = (serverApps || []).map(a => ({
+              id: a.jobId,
+              slug: a.jobSlug || null,
+              title: a.jobTitle || '',
+              company: a.company || '',
+              city: a.city || '',
+              country: a.country || '',
+              salaryDisplay: a.salaryDisplay || '',
+              appliedAt: new Date(a.createdAt).getTime(),
+              status: a.status || 'applied',
+              source: 'server',
+            }));
+            // Merge: server wins on duplicates, but keep local-only entries
+            const byId = new Map();
+            for (const s of serverEntries) byId.set(s.id, s);
+            for (const l of local) if (!byId.has(l.id)) byId.set(l.id, l);
+            const merged = [...byId.values()].sort((a, b) => (b.appliedAt || 0) - (a.appliedAt || 0));
+            setItems(merged);
+          }
+        }
+      } catch (e) {
+        // If server fetch fails, keep local view
+        console.log('[applied] server fetch failed:', e?.message);
+      }
+    })();
+  }, []));
+
+  const onLongPress = (item) => {
+    Alert.alert(
+      item.title,
+      `${item.company || ''}${item.city ? ' · ' + item.city : ''}`,
+      [
+        { text: item.status === 'applied' ? 'Mark as withdrawn' : 'Mark as applied',
+          onPress: async () => setItems(await toggleAppliedStatus(item.id)) },
+        { text: 'Remove from list', style: 'destructive',
+          onPress: async () => setItems(await removeApplied(item.id)) },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: '#fff', lineHeight: 22, marginTop: -2, fontFamily: 'DMSans_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 18, fontFamily: 'DMSans_700Bold', color: '#fff' }}>Applied Jobs</Text>
+          <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 2, fontFamily: 'DMSans_400Regular' }}>
+            {items.length === 0 ? 'Track jobs you\'ve opened' : `${items.length} job${items.length !== 1 ? 's' : ''}`}
+          </Text>
+        </View>
+      </View>
+
+      {loaded && items.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Text style={{ fontSize: 40, marginBottom: 12 }}>📋</Text>
+          <Text style={{ fontSize: 14, color: colors.textMuted, fontFamily: 'DMSans_500Medium' }}>No applied jobs yet</Text>
+          <Text style={{ fontSize: 12, color: colors.textDim, marginTop: 6, textAlign: 'center', fontFamily: 'DMSans_400Regular', lineHeight: 18 }}>
+            When you tap Apply on any job, we\'ll keep track of it here so you can come back to it later.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(j) => j.id}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, paddingTop: 4 }}
+          renderItem={({ item }) => {
+            const ci = (item.company || '?').charCodeAt(0) % 6;
+            const isWithdrawn = item.status === 'withdrawn';
+            return (
+              <TouchableOpacity
+                onPress={() => item.slug && router.push('/job/' + item.slug)}
+                onLongPress={() => onLongPress(item)}
+                activeOpacity={0.7}
+                style={{ backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 14, padding: 14, marginBottom: 8, opacity: isWithdrawn ? 0.5 : 1 }}>
+                <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+                  <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: BG[ci], alignItems: 'center', justifyContent: 'center' }}>
+                    <CompanyIcon company={item.company} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 13, fontFamily: 'DMSans_600SemiBold', color: '#fff' }} numberOfLines={1}>{item.title}</Text>
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2, fontFamily: 'DMSans_400Regular' }} numberOfLines={1}>
+                      {item.company}{item.city ? ' · ' + item.city : ''}
+                    </Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, gap: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                    <Text style={{ fontSize: 11, color: isWithdrawn ? colors.textDim : colors.primary, fontFamily: 'DMSans_700Bold' }}>
+                      {isWithdrawn ? 'Withdrawn' : (item.salaryDisplay || 'Competitive')}
+                    </Text>
+                    {!isWithdrawn ? (
+                      <View style={{ backgroundColor: 'rgba(56,189,248,0.15)', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
+                        <Text style={{ fontSize: 9, color: '#38bdf8', fontFamily: 'DMSans_700Bold' }}>{(item.status || 'applied').toUpperCase()}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={{ fontSize: 10, color: colors.textGhost, fontFamily: 'DMSans_400Regular' }}>Applied {timeAgo(item.appliedAt)}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      )}
+    </SafeAreaView>
+  );
+}

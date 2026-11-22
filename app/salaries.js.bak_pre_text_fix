@@ -1,0 +1,137 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { colors } from '../lib/colors';
+
+export default function SalariesScreen() {
+  const router = useRouter();
+  const [roles, setRoles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('https://www.jobsaisle.com/api/salaries?country=India');
+        const d = await r.json();
+        setRoles(d?.roles || []);
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  // When user picks a role → fetch detailed stats
+  useEffect(() => {
+    if (!selected) { setStats(null); return; }
+    setStatsLoading(true);
+    (async () => {
+      try {
+        const r = await fetch(`https://www.jobsaisle.com/api/salaries?country=India&role=${encodeURIComponent(selected)}`);
+        const d = await r.json();
+        setStats(d?.stats || null);
+      } catch {}
+      setStatsLoading(false);
+    })();
+  }, [selected]);
+
+  const filtered = search.trim()
+    ? roles.filter(r => r.role.toLowerCase().includes(search.trim().toLowerCase()))
+    : roles;
+
+  const fmt = (n) => n ? n.toLocaleString('en-IN') : '0';
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: '#fff', lineHeight: 22, marginTop: -2, fontFamily: 'DMSans_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, color: '#fff', fontFamily: 'DMSans_700Bold' }}>Salary Calculator</Text>
+          <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 1, fontFamily: 'DMSans_400Regular' }}>From real job postings · India</Text>
+        </View>
+      </View>
+
+      {/* Role detail card (shown when selected) */}
+      {selected ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+          <View style={{ backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 14, padding: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+              <Text style={{ fontSize: 14, color: '#fff', fontFamily: 'DMSans_700Bold', flex: 1 }}>{selected}</Text>
+              <TouchableOpacity onPress={() => setSelected(null)}>
+                <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'DMSans_500Medium' }}>Change</Text>
+              </TouchableOpacity>
+            </View>
+            {statsLoading ? <ActivityIndicator color={colors.primary} /> : stats ? (
+              <>
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>Median monthly salary</Text>
+                  <Text style={{ fontSize: 22, color: colors.primary, fontFamily: 'DMSans_700Bold', marginTop: 4 }}>
+                    {stats.currency || 'INR'} {fmt(Math.round(parseFloat(stats.p50 || 0)))}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: colors.cardBorder }}>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>25th percentile</Text>
+                  <Text style={{ fontSize: 12, color: '#fff', fontFamily: 'DMSans_500Medium' }}>{stats.currency || 'INR'} {fmt(Math.round(parseFloat(stats.p25 || 0)))}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: colors.cardBorder }}>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>75th percentile</Text>
+                  <Text style={{ fontSize: 12, color: '#fff', fontFamily: 'DMSans_500Medium' }}>{stats.currency || 'INR'} {fmt(Math.round(parseFloat(stats.p75 || 0)))}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: colors.cardBorder }}>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>Top 10% earn</Text>
+                  <Text style={{ fontSize: 12, color: colors.gold, fontFamily: 'DMSans_700Bold' }}>{stats.currency || 'INR'} {fmt(Math.round(parseFloat(stats.p90 || 0)))}+</Text>
+                </View>
+                <Text style={{ fontSize: 10, color: colors.textDim, marginTop: 10, fontFamily: 'DMSans_400Regular' }}>Based on {stats.job_count || 0} active job postings</Text>
+              </>
+            ) : <Text style={{ fontSize: 12, color: colors.textMuted }}>No data available</Text>}
+            <TouchableOpacity onPress={() => router.push({ pathname: '/(tabs)/search', params: { query: selected } })} style={{ marginTop: 14, backgroundColor: colors.primary, paddingVertical: 10, borderRadius: 9, alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>See {selected} jobs →</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Search + role list */}
+      <View style={{ paddingHorizontal: 16, paddingTop: selected ? 16 : 14 }}>
+        <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8, fontFamily: 'DMSans_600SemiBold', letterSpacing: 0.5 }}>{selected ? 'OTHER ROLES' : 'PICK A ROLE'}</Text>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search roles..."
+          placeholderTextColor={colors.textDim}
+          style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 11, fontSize: 13, color: '#fff', fontFamily: 'DMSans_400Regular', marginBottom: 12 }}
+        />
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+      ) : (
+        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+          {filtered.map((r) => (
+            <TouchableOpacity
+              key={r.role}
+              onPress={() => setSelected(r.role)}
+              activeOpacity={0.7}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11, gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={1} style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_500Medium' }}>{r.role}</Text>
+                <Text style={{ fontSize: 11, color: colors.primary, marginTop: 2, fontFamily: 'DMSans_500Medium' }}>
+                  {r.currency || 'INR'} {fmt(r.medianMin)} – {fmt(r.medianMax)}
+                </Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 11, color: colors.textDim, fontFamily: 'DMSans_400Regular' }}>{r.jobCount.toLocaleString()} jobs</Text>
+                <Text style={{ fontSize: 14, color: colors.textDim, marginTop: 2 }}>›</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}

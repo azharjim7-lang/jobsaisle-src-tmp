@@ -1,0 +1,104 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const K_APPLIED = 'ja:applied';
+const K_SAVED = 'ja:saved';
+const K_ALERTS = 'ja:alerts';
+
+// ============ applied jobs ============
+export async function getApplied() {
+  try { const v = await AsyncStorage.getItem(K_APPLIED); return v ? JSON.parse(v) : []; }
+  catch { return []; }
+}
+
+export async function addApplied(job) {
+  if (!job?.id) return;
+  const cur = await getApplied();
+  const filtered = cur.filter(j => j.id !== job.id);
+  const entry = {
+    id: job.id, slug: job.slug || null, title: job.title || '',
+    company: job.company || '', city: job.city || '', country: job.country || '',
+    salaryDisplay: job.salaryDisplay || '', appliedAt: Date.now(), status: 'applied',
+  };
+  const next = [entry, ...filtered];
+  await AsyncStorage.setItem(K_APPLIED, JSON.stringify(next));
+  return next;
+}
+
+export async function removeApplied(id) {
+  const cur = await getApplied();
+  const next = cur.filter(j => j.id !== id);
+  await AsyncStorage.setItem(K_APPLIED, JSON.stringify(next));
+  return next;
+}
+
+export async function toggleAppliedStatus(id) {
+  const cur = await getApplied();
+  const next = cur.map(j => j.id === id ? { ...j, status: j.status === 'applied' ? 'withdrawn' : 'applied' } : j);
+  await AsyncStorage.setItem(K_APPLIED, JSON.stringify(next));
+  return next;
+}
+
+// ============ saved jobs ============
+export async function getSaved() {
+  try { const v = await AsyncStorage.getItem(K_SAVED); return v ? JSON.parse(v) : []; }
+  catch { return []; }
+}
+
+export async function isSaved(id) {
+  const cur = await getSaved();
+  return cur.some(j => j.id === id);
+}
+
+export async function toggleSaved(job) {
+  if (!job?.id) return false;
+  const cur = await getSaved();
+  const exists = cur.some(j => j.id === job.id);
+  let next;
+  if (exists) {
+    next = cur.filter(j => j.id !== job.id);
+  } else {
+    const entry = {
+      id: job.id, slug: job.slug || null, title: job.title || '',
+      company: job.company || '', city: job.city || '', country: job.country || '',
+      salaryDisplay: job.salaryDisplay || '', postedDate: job.postedDate || null,
+      savedAt: Date.now(),
+    };
+    next = [entry, ...cur];
+  }
+  await AsyncStorage.setItem(K_SAVED, JSON.stringify(next));
+  return !exists; // true if now saved
+}
+
+// ============ alerts (saved searches) ============
+export async function getAlerts() {
+  try { const v = await AsyncStorage.getItem(K_ALERTS); return v ? JSON.parse(v) : []; }
+  catch { return []; }
+}
+
+export async function addAlert({ query, country, city }) {
+  if (!query?.trim()) return;
+  const cur = await getAlerts();
+  const key = `${query.trim().toLowerCase()}|${country || ''}|${city || ''}`;
+  if (cur.some(a => a.key === key)) return cur;
+  const entry = {
+    key, query: query.trim(), country: country || null, city: city || null,
+    enabled: true, createdAt: Date.now(),
+  };
+  const next = [entry, ...cur];
+  await AsyncStorage.setItem(K_ALERTS, JSON.stringify(next));
+  return next;
+}
+
+export async function removeAlert(key) {
+  const cur = await getAlerts();
+  const next = cur.filter(a => a.key !== key);
+  await AsyncStorage.setItem(K_ALERTS, JSON.stringify(next));
+  return next;
+}
+
+export async function toggleAlert(key) {
+  const cur = await getAlerts();
+  const next = cur.map(a => a.key === key ? { ...a, enabled: !a.enabled } : a);
+  await AsyncStorage.setItem(K_ALERTS, JSON.stringify(next));
+  return next;
+}

@@ -1,0 +1,119 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCallback } from 'react';
+import { colors } from '../lib/colors';
+import { getApplied, getSaved, getAlerts } from '../lib/storage';
+
+export default function MenuScreen() {
+  const router = useRouter();
+  const [user, setUser] = useState(null);
+  const [counts, setCounts] = useState({ applied: 0, saved: 0, alerts: 0 });
+
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      const u = await AsyncStorage.getItem('user');
+      const parsed = u ? JSON.parse(u) : null;
+      setUser(parsed);
+      if (parsed) {
+        const [a, s, al] = await Promise.all([getApplied(), getSaved(), getAlerts()]);
+        setCounts({ applied: a.length, saved: s.length, alerts: al.length });
+      }
+    })();
+  }, []));
+
+  const openWeb = (path, title) => router.push({ pathname: '/web', params: { path, title: title || 'JobsAisle' } });
+  const requireAuth = (action) => {
+    if (!user) { router.push('/auth'); return; }
+    action();
+  };
+
+  const publicItems = [
+    { icon: '🏭', label: 'Industries', sub: 'Browse by sector', onPress: () => router.push('/industries') },
+    { icon: '🏢', label: 'Top companies', sub: 'Companies hiring now', onPress: () => router.push('/companies') },
+    { icon: '💰', label: 'Salary calculator', sub: 'Estimate your worth', onPress: () => router.push('/salaries') },
+    { icon: '📈', label: 'Skills in demand', sub: 'Most-asked skills', onPress: () => router.push('/skills') },
+    { icon: '✍️', label: 'Career insights', sub: 'Articles + guides', onPress: () => openWeb('/blog', 'Career Insights') },
+    { icon: 'ℹ️', label: 'About JobsAisle', sub: 'Our story', onPress: () => openWeb('/about', 'About') },
+  ];
+
+  const privateItems = [
+    { icon: '📋', label: 'Applied jobs', count: counts.applied, onPress: () => requireAuth(() => router.push('/applied')) },
+    { icon: '🔔', label: 'Job alerts', count: counts.alerts, onPress: () => requireAuth(() => router.push('/alerts')) },
+    { icon: '⭐', label: 'Saved jobs', count: counts.saved, onPress: () => requireAuth(() => router.push('/saved')) },
+  ];
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: '#fff', lineHeight: 22, marginTop: -2, fontFamily: 'DMSans_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <Text style={{ flex: 1, fontSize: 16, color: '#fff', fontFamily: 'DMSans_700Bold' }}>Menu</Text>
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+        {!user ? (
+          <TouchableOpacity 
+            onPress={() => router.push('/auth')} 
+            activeOpacity={0.85}
+            style={{ marginHorizontal: 16, marginTop: 16, marginBottom: 8, padding: 16, backgroundColor: colors.primary, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 20 }}>👤</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontFamily: 'DMSans_700Bold', color: colors.bg }}>Sign in to JobsAisle</Text>
+              <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.7)', marginTop: 2, fontFamily: 'DMSans_400Regular' }}>Save jobs, track applications, get matches</Text>
+            </View>
+            <Text style={{ fontSize: 18, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>→</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {/* Public items — always visible */}
+        <View style={{ paddingTop: user ? 16 : 8, paddingHorizontal: 16 }}>
+          <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8, fontFamily: 'DMSans_600SemiBold', letterSpacing: 0.5 }}>EXPLORE</Text>
+        </View>
+        {publicItems.map((item, i) => (
+          <TouchableOpacity 
+            key={'pub-' + i} 
+            onPress={item.onPress}
+            activeOpacity={0.7}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+            <Text style={{ fontSize: 22 }}>{item.icon}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, color: '#fff', fontFamily: 'DMSans_500Medium' }}>{item.label}</Text>
+              {item.sub ? <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 2, fontFamily: 'DMSans_400Regular' }}>{item.sub}</Text> : null}
+            </View>
+            <Text style={{ fontSize: 16, color: colors.textDim }}>›</Text>
+          </TouchableOpacity>
+        ))}
+
+        {/* Private items */}
+        <View style={{ paddingTop: 24, paddingHorizontal: 16 }}>
+          <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8, fontFamily: 'DMSans_600SemiBold', letterSpacing: 0.5 }}>YOUR ACTIVITY</Text>
+        </View>
+        {privateItems.map((item, i) => (
+          <TouchableOpacity 
+            key={'priv-' + i} 
+            onPress={item.onPress}
+            activeOpacity={0.7}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder, opacity: user ? 1 : 0.55 }}>
+            <Text style={{ fontSize: 22 }}>{item.icon}</Text>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 14, color: '#fff', fontFamily: 'DMSans_500Medium' }}>{item.label}</Text>
+              {item.count > 0 ? (
+                <View style={{ backgroundColor: colors.primary, paddingHorizontal: 7, paddingVertical: 1, borderRadius: 9 }}>
+                  <Text style={{ fontSize: 10, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>{item.count}</Text>
+                </View>
+              ) : null}
+              {!user ? <Text style={{ fontSize: 10, color: colors.textDim, fontFamily: 'DMSans_400Regular' }}>Sign in</Text> : null}
+            </View>
+            <Text style={{ fontSize: 16, color: colors.textDim }}>›</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}

@@ -1,0 +1,97 @@
+import { useState, useCallback } from 'react';
+import { View, Text, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { colors } from '../lib/colors';
+
+function timeAgo(t) {
+  if (!t) return '';
+  const days = Math.floor((Date.now() - t) / 86400000);
+  if (days < 1) {
+    const hours = Math.floor((Date.now() - t) / 3600000);
+    if (hours < 1) return 'Just now';
+    return hours + 'h ago';
+  }
+  if (days === 1) return '1d ago';
+  if (days < 7) return days + 'd ago';
+  return Math.floor(days / 7) + 'w ago';
+}
+
+export default function NotificationsScreen() {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
+
+  const load = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem('ja:notifications');
+      const list = raw ? JSON.parse(raw) : [];
+      setItems(Array.isArray(list) ? list.sort((a, b) => (b.ts || 0) - (a.ts || 0)) : []);
+    } catch { setItems([]); }
+    setLoaded(true);
+  }, []);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  const clearAll = async () => {
+    await AsyncStorage.setItem('ja:notifications', '[]');
+    setItems([]);
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <View style={{ paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View>
+          <Text style={{ fontSize: 20, fontFamily: 'DMSans_700Bold', color: '#fff' }}>Notifications</Text>
+          <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 4, fontFamily: 'DMSans_400Regular' }}>
+            {items.length === 0 ? 'No notifications yet' : `${items.length} notification${items.length !== 1 ? 's' : ''}`}
+          </Text>
+        </View>
+        {items.length > 0 ? (
+          <TouchableOpacity onPress={clearAll}>
+            <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'DMSans_600SemiBold' }}>Clear all</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {loaded && items.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Text style={{ fontSize: 40, marginBottom: 12 }}>🔕</Text>
+          <Text style={{ fontSize: 14, color: colors.textMuted, fontFamily: 'DMSans_500Medium' }}>You're all caught up</Text>
+          <Text style={{ fontSize: 12, color: colors.textDim, marginTop: 6, textAlign: 'center', fontFamily: 'DMSans_400Regular', lineHeight: 18 }}>
+            Job matches, application updates, and alerts will appear here.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(n, i) => (n.id || '') + '-' + i}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              onPress={() => { if (item.link) router.push(item.link); }}
+              activeOpacity={0.7}
+              style={{ backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, padding: 14, marginBottom: 8, opacity: item.read ? 0.6 : 1 }}>
+              <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(52,211,153,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 14 }}>{item.icon || '📣'}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_600SemiBold' }} numberOfLines={1}>{item.title || 'Notification'}</Text>
+                  {item.body ? (
+                    <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2, fontFamily: 'DMSans_400Regular' }} numberOfLines={2}>{item.body}</Text>
+                  ) : null}
+                </View>
+                <Text style={{ fontSize: 10, color: colors.textDim, fontFamily: 'DMSans_400Regular' }}>{timeAgo(item.ts)}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+        />
+      )}
+    </SafeAreaView>
+  );
+}

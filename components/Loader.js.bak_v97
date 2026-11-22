@@ -1,0 +1,83 @@
+import { useEffect, useRef } from 'react';
+import { View, Text, Animated, Easing } from 'react-native';
+import { colors } from '../lib/colors';
+
+/**
+ * Full-screen loading overlay.
+ * Props:
+ *  - visible: boolean (when true, overlay is shown)
+ *  - title: string (e.g. "Signing you in")
+ *  - subtitle: string (e.g. "Setting up your account...")
+ */
+export default function Loader({ visible, title = 'Just a moment', subtitle = 'Hang tight...' }) {
+  const rot1 = useRef(new Animated.Value(0)).current;
+  const rot2 = useRef(new Animated.Value(0)).current;
+  const dot1 = useRef(new Animated.Value(0)).current;
+  const dot2 = useRef(new Animated.Value(0)).current;
+  const dot3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!visible) return;
+    const spin1 = Animated.loop(Animated.timing(rot1, { toValue: 1, duration: 800, easing: Easing.linear, useNativeDriver: true }));
+    const spin2 = Animated.loop(Animated.timing(rot2, { toValue: 1, duration: 1200, easing: Easing.linear, useNativeDriver: true }));
+    spin1.start();
+    spin2.start();
+
+    const makeBounce = (val, delay) => Animated.loop(Animated.sequence([
+      Animated.delay(delay),
+      Animated.timing(val, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(val, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]));
+    const b1 = makeBounce(dot1, 0);
+    const b2 = makeBounce(dot2, 160);
+    const b3 = makeBounce(dot3, 320);
+    b1.start(); b2.start(); b3.start();
+
+    return () => { spin1.stop(); spin2.stop(); b1.stop(); b2.stop(); b3.stop(); };
+  }, [visible]);
+
+  if (!visible) return null;
+
+  const spin1Deg = rot1.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const spin2Deg = rot2.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
+  const dotStyle = (v) => ({
+    width: 7, height: 7, borderRadius: 4, backgroundColor: colors.primary, marginHorizontal: 3,
+    transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }],
+  });
+
+  return (
+    <View style={{
+      position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(12, 20, 16, 0.92)',
+      alignItems: 'center', justifyContent: 'center',
+      zIndex: 9999,
+    }}>
+      <View style={{ width: 72, height: 72, alignItems: 'center', justifyContent: 'center', marginBottom: 22 }}>
+        <Animated.View style={{
+          position: 'absolute', width: 72, height: 72, borderRadius: 36,
+          borderWidth: 3, borderColor: colors.primary, borderTopColor: 'transparent',
+          transform: [{ rotate: spin1Deg }],
+        }} />
+        <Animated.View style={{
+          position: 'absolute', width: 48, height: 48, borderRadius: 24,
+          borderWidth: 2.5, borderColor: colors.primary, borderRightColor: 'transparent', borderBottomColor: 'transparent',
+          transform: [{ rotate: spin2Deg }],
+          opacity: 0.7,
+        }} />
+      </View>
+      <Text style={{
+        fontSize: 18, fontFamily: 'DMSans_700Bold',
+        color: '#fff', marginBottom: 6, textAlign: 'center',
+      }}>{title}</Text>
+      <Text style={{
+        fontSize: 13, fontFamily: 'DMSans_400Regular',
+        color: 'rgba(255,255,255,0.78)', marginBottom: 18, textAlign: 'center',
+      }}>{subtitle}</Text>
+      <View style={{ flexDirection: 'row' }}>
+        <Animated.View style={dotStyle(dot1)} />
+        <Animated.View style={dotStyle(dot2)} />
+        <Animated.View style={dotStyle(dot3)} />
+      </View>
+    </View>
+  );
+}

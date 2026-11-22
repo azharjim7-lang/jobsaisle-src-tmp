@@ -1,0 +1,331 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Image } from 'react-native';
+import { useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
+import Svg, { Path } from 'react-native-svg';
+import { colors } from '../lib/colors';
+import { signInWithEmail, signUpWithEmail, sendPasswordReset, signInWithGoogleIdToken, signInWithLinkedInProfile, userToProfile, authErrorMessage } from '../lib/firebase';
+import { fetchProfile, isProfileComplete } from '../lib/profile';
+import Loader from '../components/Loader';
+import * as Notifications from 'expo-notifications';
+
+WebBrowser.maybeCompleteAuthSession();
+
+function GoogleIcon({ size = 16 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 48 48">
+      <Path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z" />
+      <Path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z" />
+      <Path fill="#FBBC05" d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z" />
+      <Path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z" />
+    </Svg>
+  );
+}
+
+function LinkedInIcon({ size = 16 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path fill="#FFFFFF" d="M4.98 3.5C4.98 4.881 3.87 6 2.5 6S.02 4.881.02 3.5C.02 2.12 1.13 1 2.5 1s2.48 1.12 2.48 2.5zM5 8H0v16h5V8zm7.982 0H8.014v16h4.969v-8.399c0-4.67 6.029-5.052 6.029 0V24H24V13.869c0-7.88-8.922-7.593-11.018-3.714V8z" />
+    </Svg>
+  );
+}
+
+
+// Sync auth state with backend — handles email collision/merging across web+app
+
+async function registerPushToken(uid) {
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    let finalStatus = status;
+    if (status !== 'granted') {
+      const r = await Notifications.requestPermissionsAsync();
+      finalStatus = r.status;
+    }
+    if (finalStatus !== 'granted') return;
+    const tokenData = await Notifications.getDevicePushTokenAsync();
+    const token = tokenData?.data;
+    if (!token) return;
+    await fetch('https://www.jobsaisle.com/api/notifications/register-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: uid, token, platform: tokenData.type || 'unknown' }),
+    });
+  } catch (e) {
+    console.log('[push] register failed:', e?.message);
+  }
+}
+
+async function syncAuthWithBackend(userProfile) {
+  if (!userProfile?.uid || !userProfile?.email) return userProfile;
+  try {
+    const r = await fetch('https://www.jobsaisle.com/api/auth/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid: userProfile.uid, email: userProfile.email, name: userProfile.displayName || null }),
+    });
+    const data = await r.json();
+    if (data.canonicalUid && data.canonicalUid !== userProfile.uid) {
+      // Server merged this account into a canonical one — use canonical uid for storage
+      return { ...userProfile, uid: data.canonicalUid, mergedFrom: userProfile.uid };
+    }
+  } catch {}
+  return userProfile;
+}
+
+export default function AuthScreen() {
+  const [mode, setMode] = useState('signup');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loaderMsg, setLoaderMsg] = useState({ title: 'Just a moment', subtitle: 'Hang tight...' });
+  // Check for persisted loading state (set before redirect-based auth)
+  useEffect(() => {
+    AsyncStorage.getItem('authPending').then(v => {
+      if (v === '1') {
+        setLoading(true);
+        setLoaderMsg({ title: 'Signing you in', subtitle: 'Setting up your account...' });
+      }
+    });
+  }, []);
+  const [error, setError] = useState('');
+  const router = useRouter();
+
+  // Configure Google Sign-In once
+  useEffect(() => {
+    const googleCfg = Constants.expoConfig?.extra?.googleAuth || {};
+    GoogleSignin.configure({
+      webClientId: googleCfg.webClientId,
+      offlineAccess: false,
+    });
+  }, []);
+
+
+
+  const handleSubmit = async () => {
+    setError('');
+    if (mode === 'signup' && !name.trim()) { setError('Enter your name'); return; }
+    if (!email.trim()) { setError('Enter email'); return; }
+    if (!pw || pw.length < 6) { setError('Password must be 6+ characters'); return; }
+    setLoading(true);
+    try {
+      const fbUser = mode === 'signup'
+        ? await signUpWithEmail(email.trim(), pw, name)
+        : await signInWithEmail(email.trim(), pw);
+      let userProfile = userToProfile(fbUser);
+      userProfile = await syncAuthWithBackend(userProfile);
+      if (userProfile?.uid) registerPushToken(userProfile.uid);
+      await AsyncStorage.setItem('user', JSON.stringify(userProfile));
+      await AsyncStorage.removeItem('authPending');
+      // Check if profile is complete; if not, route to setup wizard
+      if (mode === 'signup') {
+        router.replace('/profile-setup');
+      } else {
+        const p = await fetchProfile(userProfile.uid);
+        router.replace(isProfileComplete(p) ? '/(tabs)' : '/profile-setup');
+      }
+    } catch (e) {
+      setError(authErrorMessage(e));
+      await AsyncStorage.removeItem('authPending');
+    }
+    setLoading(false);
+  };
+
+  const handleForgotPassword = async () => {
+    setError('');
+    if (!email.trim()) { setError('Enter your email first, then tap forgot password'); return; }
+    try {
+      await sendPasswordReset(email.trim());
+      setError('Password reset email sent. Check your inbox.');
+    } catch (e) {
+      setError(authErrorMessage(e));
+    }
+  };
+
+
+
+  const handleGoogle = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      // Force account picker every time: clear any cached selection first
+      try { await GoogleSignin.signOut(); } catch (e) {}
+      const userInfo = await GoogleSignin.signIn();
+      const idToken = userInfo?.idToken || userInfo?.data?.idToken;
+      if (!idToken) {
+        setError('Could not get Google ID token');
+        setLoading(false);
+        return;
+      }
+      const fbUser = await signInWithGoogleIdToken(idToken);
+      let userProfile = userToProfile(fbUser);
+      userProfile = await syncAuthWithBackend(userProfile);
+      if (userProfile?.uid) registerPushToken(userProfile.uid);
+      await AsyncStorage.setItem('user', JSON.stringify(userProfile));
+      const p = await fetchProfile(userProfile.uid);
+      router.replace(isProfileComplete(p) ? '/(tabs)' : '/profile-setup');
+    } catch (e) {
+      if (e?.code === statusCodes.SIGN_IN_CANCELLED) {
+        // user cancelled - silently ignore
+      } else if (e?.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        setError('Google Play Services not available');
+      } else {
+        setError(e?.message || 'Google sign-in failed');
+      }
+      await AsyncStorage.removeItem('authPending');
+    }
+    setLoading(false);
+  };
+
+  const handleLinkedIn = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const linkedInCfg = Constants.expoConfig?.extra?.linkedInAuth || {};
+      const clientId = linkedInCfg.clientId;
+      if (!clientId) { setError('LinkedIn sign-in not configured'); setLoading(false); return; }
+
+      const redirectUri = 'https://www.jobsaisle.com/api/auth/linkedin/mobile-callback';
+      const state = Math.random().toString(36).substring(2, 15);
+      const scope = 'openid profile email';
+      const authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&scope=${encodeURIComponent(scope)}`;
+
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, 'jobsaisle://linkedin-callback');
+
+      if (result.type !== 'success') { setLoading(false); return; }
+      const url = new URL(result.url);
+      const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+      if (!code || returnedState !== state) { setError('LinkedIn auth failed'); setLoading(false); return; }
+
+      // Exchange code for token via our backend (which then exchanges with LinkedIn API)
+      const exchangeRes = await fetch('https://www.jobsaisle.com/api/auth/linkedin-exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirectUri }),
+      });
+      const data = await exchangeRes.json();
+      if (data.error) { setError(data.error); setLoading(false); return; }
+
+      // Sign in to Firebase using LinkedIn profile data
+      const fbUser = await signInWithLinkedInProfile(data);
+      let userProfile = userToProfile(fbUser);
+      userProfile = await syncAuthWithBackend(userProfile);
+      if (userProfile?.uid) registerPushToken(userProfile.uid);
+      await AsyncStorage.setItem('user', JSON.stringify(userProfile));
+      const p = await fetchProfile(userProfile.uid);
+      router.replace(isProfileComplete(p) ? '/(tabs)' : '/profile-setup');
+    } catch (e) {
+      setError(e?.message || 'LinkedIn sign-in failed');
+    }
+    setLoading(false);
+  };
+
+  const skip = () => router.replace('/(tabs)');
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <Loader visible={loading} title={loaderMsg.title} subtitle={loaderMsg.subtitle} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24 }}>
+
+          {/* Logo */}
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            <Image source={require('../assets/logo.png')} style={{ width: 220, height: 60 }} resizeMode="contain" />
+          </View>
+
+          <Text style={{ fontSize: 22, fontFamily: 'DMSans_700Bold', color: '#fff', textAlign: 'center', marginBottom: 20 }}>
+            {mode === 'signup' ? 'Create your account' : 'Welcome back'}
+          </Text>
+
+          {/* Social sign-in coming in production build */}
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+            <TouchableOpacity onPress={handleGoogle} style={{ flex: 1, minWidth: 0, backgroundColor: '#fff', borderRadius: 12, paddingVertical: 13, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <GoogleIcon size={18} />
+              <Text numberOfLines={1} style={{ fontSize: 14, fontFamily: 'DMSans_600SemiBold', color: '#1C1C1E', flexShrink: 1 }}>Google</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleLinkedIn} style={{ flex: 1, minWidth: 0, backgroundColor: colors.linkedin, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <LinkedInIcon size={16} />
+              <Text numberOfLines={1} style={{ fontSize: 14, fontFamily: 'DMSans_600SemiBold', color: '#fff', flexShrink: 1 }}>LinkedIn</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Divider */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 10 }}>
+            <View style={{ flex: 1, height: 0.5, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+            <Text style={{ fontSize: 12, color: colors.textMuted }}>or</Text>
+            <View style={{ flex: 1, height: 0.5, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+          </View>
+
+          {/* Form */}
+          {mode === 'signup' && (
+            <TextInput
+              placeholder="Full name"
+              placeholderTextColor={colors.textDim}
+              value={name}
+              onChangeText={setName}
+              style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15, color: '#fff', fontFamily: 'DMSans_400Regular', marginBottom: 10 }}
+            />
+          )}
+          <TextInput
+            placeholder="Email address"
+            placeholderTextColor={colors.textDim}
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15, color: '#fff', fontFamily: 'DMSans_400Regular', marginBottom: 10 }}
+          />
+          <View style={{ position: 'relative', marginBottom: mode === 'login' ? 6 : 14 }}>
+            <TextInput
+              placeholder="Password"
+              placeholderTextColor={colors.textDim}
+              value={pw}
+              onChangeText={setPw}
+              secureTextEntry={!showPw}
+              style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, paddingRight: 44, fontSize: 15, color: '#fff', fontFamily: 'DMSans_400Regular' }}
+            />
+            <TouchableOpacity onPress={() => setShowPw(!showPw)} style={{ position: 'absolute', right: 14, top: 13 }}>
+              <Text style={{ fontSize: 14, color: colors.textDim }}>{showPw ? '🙈' : '👁'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {mode === 'login' && (
+            <TouchableOpacity onPress={handleForgotPassword} style={{ alignSelf: 'flex-end', marginBottom: 14 }}>
+              <Text style={{ fontSize: 13, color: colors.primary, fontFamily: 'DMSans_500Medium' }}>Forgot password?</Text>
+            </TouchableOpacity>
+          )}
+
+          {error ? <Text style={{ color: colors.red, fontSize: 13, textAlign: 'center', marginBottom: 10, fontFamily: 'DMSans_400Regular' }}>{error}</Text> : null}
+
+          {/* Submit */}
+          <TouchableOpacity onPress={handleSubmit} disabled={loading} style={{ backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 15, opacity: loading ? 0.6 : 1 }}>
+            <Text style={{ color: colors.bg, fontSize: 16, fontFamily: 'DMSans_700Bold', textAlign: 'center' }}>
+              {loading ? 'Please wait...' : mode === 'signup' ? 'Create Account' : 'Log In'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Toggle mode */}
+          <TouchableOpacity onPress={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setError(''); }} style={{ marginTop: 16, alignItems: 'center' }}>
+            <Text style={{ fontSize: 14, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>
+              {mode === 'signup' ? 'Already have an account? ' : "Don't have an account? "}
+              <Text style={{ color: colors.primary, fontFamily: 'DMSans_600SemiBold' }}>{mode === 'signup' ? 'Log in' : 'Sign up'}</Text>
+            </Text>
+          </TouchableOpacity>
+
+          {/* Skip */}
+          <TouchableOpacity onPress={skip} style={{ marginTop: 14, alignItems: 'center' }}>
+            <Text style={{ fontSize: 13, color: colors.textGhost, fontFamily: 'DMSans_400Regular' }}>Skip for now →</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}

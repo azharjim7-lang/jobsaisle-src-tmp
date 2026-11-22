@@ -1,0 +1,24 @@
+import { Redirect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useState } from 'react';
+
+export default function Index() {
+  const [checked, setChecked] = useState(false);
+  const [hasUser, setHasUser] = useState(false);
+  const [seenOnboarding, setSeenOnboarding] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const [u, ob] = await Promise.all([
+        AsyncStorage.getItem('user'),
+        AsyncStorage.getItem('ja:onboarding_done'),
+      ]);
+      setHasUser(!!u);
+      setSeenOnboarding(!!ob);
+      setChecked(true);
+    })();
+  }, []);
+  if (!checked) return null;
+  // First launch → onboarding. Then auth or tabs.
+  if (!seenOnboarding && !hasUser) return <Redirect href="/onboarding" />;
+  return <Redirect href={hasUser ? '/(tabs)' : '/auth'} />;
+}

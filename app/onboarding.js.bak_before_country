@@ -1,0 +1,70 @@
+import { useState, useRef } from 'react';
+import { View, Text, TouchableOpacity, Animated, PanResponder, Dimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { colors } from '../lib/colors';
+
+const { width: WIDTH } = Dimensions.get('window');
+
+const SLIDES = [
+  {
+    emoji: '🌊',
+    title: 'Jobs across the Gulf & India',
+    subtitle: 'Curated roles from top employers in Dubai, Riyadh, Bangalore, Mumbai and more.',
+  },
+  {
+    emoji: '⚡',
+    title: 'Matched to you',
+    subtitle: 'Personalized recommendations based on your skills, experience, and preferred cities.',
+  },
+  {
+    emoji: '💼',
+    title: 'Apply with one tap',
+    subtitle: 'Save your profile once, then apply to any role instantly. Track your applications.',
+  },
+];
+
+export default function OnboardingScreen() {
+  const router = useRouter();
+  const [index, setIndex] = useState(0);
+  const finish = async () => {
+    await AsyncStorage.setItem('ja:onboarding_done', '1');
+    router.replace('/auth');
+  };
+  const next = () => {
+    if (index < SLIDES.length - 1) setIndex(index + 1);
+    else finish();
+  };
+  const slide = SLIDES[index];
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+        <Text style={{ fontSize: 96, marginBottom: 32 }}>{slide.emoji}</Text>
+        <Text style={{ fontSize: 24, color: '#fff', fontFamily: 'DMSans_700Bold', textAlign: 'center', marginBottom: 12 }}>{slide.title}</Text>
+        <Text style={{ fontSize: 14, color: colors.textMuted, fontFamily: 'DMSans_400Regular', textAlign: 'center', lineHeight: 22 }}>{slide.subtitle}</Text>
+      </View>
+      {/* Dots */}
+      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
+        {SLIDES.map((_, i) => (
+          <View key={i} style={{ width: i === index ? 24 : 8, height: 8, borderRadius: 4, backgroundColor: i === index ? colors.primary : 'rgba(255,255,255,0.2)' }} />
+        ))}
+      </View>
+      {/* Buttons */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: 24, paddingBottom: 32, gap: 12 }}>
+        {index > 0 ? (
+          <TouchableOpacity onPress={() => setIndex(index - 1)} style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}>
+            <Text style={{ fontSize: 14, color: '#fff', fontFamily: 'DMSans_600SemiBold' }}>Back</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={finish} style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}>
+            <Text style={{ fontSize: 14, color: '#fff', fontFamily: 'DMSans_600SemiBold' }}>Skip</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity onPress={next} style={{ flex: 1, backgroundColor: colors.primary, paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}>
+          <Text style={{ fontSize: 14, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>{index === SLIDES.length - 1 ? 'Get started' : 'Next'}</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}

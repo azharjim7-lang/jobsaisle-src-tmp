@@ -1,0 +1,256 @@
+import { useState, useCallback, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as WebBrowser from 'expo-web-browser';
+import { colors } from '../../lib/colors';
+
+const API_BASE = 'https://www.jobsaisle.com';
+
+export default function ProScreen() {
+  const router = useRouter();
+  const [user, setUser] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [paying, setPaying] = useState(false);
+
+  // Refresh status whenever screen focuses
+  useFocusEffect(useCallback(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingStatus(true);
+      const u = await AsyncStorage.getItem('user');
+      const parsed = u ? JSON.parse(u) : null;
+      if (!cancelled) setUser(parsed);
+      
+      if (parsed) {
+        try {
+          const r = await fetch(`${API_BASE}/api/premium/status`, {
+            headers: { 'x-user-id': parsed.uid },
+          });
+          const d = await r.json();
+          if (!cancelled) setStatus(d);
+        } catch {
+          if (!cancelled) setStatus({ isPremium: false });
+        }
+      } else {
+        if (!cancelled) setStatus({ isPremium: false });
+      }
+      if (!cancelled) setLoadingStatus(false);
+    })();
+    return () => { cancelled = true; };
+  }, []));
+
+  async function handleSubscribe() {
+    if (!user) {
+      router.push('/auth');
+      return;
+    }
+    setPaying(true);
+    try {
+      // 1. Create order on backend
+      const orderRes = await fetch(`${API_BASE}/api/premium/create-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.uid,
+          userName: user.name || user.email?.split('@')[0],
+          userEmail: user.email,
+          userPhone: user.phone || '',
+        }),
+      });
+      const orderData = await orderRes.json();
+
+      if (!orderData.orderId) {
+        Alert.alert('Error', orderData.error || 'Could not create order. Please try again.');
+        setPaying(false);
+        return;
+      }
+
+      // 2. Open external browser with payment page that deep-links back on completion
+      const qs = new URLSearchParams({
+        keyId: orderData.keyId,
+        amount: String(orderData.amount),
+        currency: orderData.currency || 'INR',
+        name: orderData.userName || user.name || '',
+        email: orderData.userEmail || user.email || '',
+        phone: orderData.userPhone || '',
+        description: 'JobsAisle Pro Monthly',
+      }).toString();
+      const payUrl = `${API_BASE}/pay/${orderData.orderId}?${qs}`;
+
+      const result = await WebBrowser.openAuthSessionAsync(payUrl, 'jobsaisle://payment-complete');
+
+      // 3. Parse return URL — deep-link returns ?status=success&order_id=...&payment_id=...&signature=...
+      if (result.type !== 'success' || !result.url) {
+        setPaying(false);
+        return;
+      }
+      const url = new URL(result.url);
+      const status = url.searchParams.get('status');
+
+      if (status === 'cancelled') {
+        setPaying(false);
+        return;
+      }
+      if (status === 'failed') {
+        Alert.alert('Payment failed', url.searchParams.get('error') || 'Please try again.');
+        setPaying(false);
+        return;
+      }
+      if (status !== 'success') {
+        Alert.alert('Payment incomplete', 'Status: ' + status);
+        setPaying(false);
+        return;
+      }
+
+      // 4. Verify payment on backend (server-side signature check)
+      const verifyRes = await fetch(`${API_BASE}/api/premium/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          razorpay_order_id: url.searchParams.get('order_id'),
+          razorpay_payment_id: url.searchParams.get('payment_id'),
+          razorpay_signature: url.searchParams.get('signature'),
+        }),
+      });
+      const verifyData = await verifyRes.json();
+
+      if (verifyData.status === 'active') {
+        // Refresh status
+        const sRes = await fetch(`${API_BASE}/api/premium/status`, {
+          headers: { 'x-user-id': user.uid },
+        });
+        const sData = await sRes.json();
+        setStatus(sData);
+        Alert.alert(
+          '🎉 Welcome to Pro!',
+          'Your subscription is active. Unlock recruiter contacts, CV Analyzer, and more.'
+        );
+      } else {
+        Alert.alert('Verification failed', verifyData.error || 'Payment received but verification failed. Please contact support.');
+      }
+    } catch (err) {
+      Alert.alert('Error', err?.message || 'Payment could not be completed.');
+    }
+    setPaying(false);
+  }
+
+  // Loading state
+  if (loadingStatus) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={colors.primary} />
+      </SafeAreaView>
+    );
+  }
+
+  // Pro member dashboard
+  if (status?.isPremium) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          <View style={{ alignItems: 'center', paddingTop: 30, paddingHorizontal: 20 }}>
+            <View style={{ backgroundColor: 'rgba(226,192,110,0.12)', borderWidth: 0.5, borderColor: 'rgba(226,192,110,0.35)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, marginBottom: 14 }}>
+              <Text style={{ fontSize: 11, color: colors.gold, fontFamily: 'Inter_700Bold', letterSpacing: 1.2 }}>✦ PRO MEMBER</Text>
+            </View>
+            <Text style={{ fontSize: 22, fontFamily: 'Inter_700Bold', color: colors.text }}>Your Pro Dashboard</Text>
+            <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 6, fontFamily: 'Inter_400Regular' }}>Premium tools & connections</Text>
+          </View>
+
+          <View style={{ paddingHorizontal: 16, paddingTop: 24, gap: 12 }}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(13,147,115,0.3)', borderRadius: 16, padding: 16 }}>
+              <Text style={{ fontSize: 26, marginBottom: 6 }}>📄</Text>
+              <Text style={{ fontSize: 15, color: colors.text, fontFamily: 'Inter_700Bold' }}>AI CV Review</Text>
+              <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 3, fontFamily: 'Inter_400Regular' }}>Score & feedback</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+                <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'Inter_500Medium' }}>{status.cvAnalyser?.remaining || 0} left this month</Text>
+                <View style={{ backgroundColor: 'rgba(13,147,115,0.18)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 }}>
+                  <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'Inter_700Bold' }}>Open →</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={{ backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(226,192,110,0.25)', borderRadius: 16, padding: 16 }}>
+              <Text style={{ fontSize: 26, marginBottom: 6 }}>🤝</Text>
+              <Text style={{ fontSize: 15, color: colors.text, fontFamily: 'Inter_700Bold' }}>Recruiter Intros</Text>
+              <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 3, fontFamily: 'Inter_400Regular' }}>Direct access to hiring managers</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+                <Text style={{ fontSize: 11, color: colors.gold, fontFamily: 'Inter_500Medium' }}>{status.recruiterConnect?.remaining || 0} intros left</Text>
+                <View style={{ backgroundColor: 'rgba(226,192,110,0.15)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 }}>
+                  <Text style={{ fontSize: 11, color: colors.gold, fontFamily: 'Inter_700Bold' }}>Find recruiters →</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // Non-Pro upgrade screen
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
+        <View style={{ paddingTop: 28, paddingHorizontal: 20, alignItems: 'center' }}>
+          <Text style={{ fontSize: 10, color: colors.gold, fontFamily: 'Inter_700Bold', letterSpacing: 1.5 }}>✦ JOBSAISLE PRO</Text>
+          <Text style={{ fontSize: 22, fontFamily: 'Inter_700Bold', color: colors.text, textAlign: 'center', marginTop: 8, lineHeight: 30 }}>Stop applying{'\n'}into the void.</Text>
+          <Text style={{ fontSize: 12, color: colors.textMuted, textAlign: 'center', marginTop: 8, fontFamily: 'Inter_400Regular' }}>Message hiring managers directly.</Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', marginHorizontal: 16, marginTop: 20, backgroundColor: 'rgba(52,211,153,0.06)', borderWidth: 0.5, borderColor: 'rgba(52,211,153,0.12)', borderRadius: 14, overflow: 'hidden' }}>
+          {[['16K+', 'Contacts'], ['3.2K', 'Pro users'], ['78%', 'Response']].map(([n, l], i) => (
+            <View key={l} style={{ flex: 1, alignItems: 'center', paddingVertical: 14, borderRightWidth: i < 2 ? 0.5 : 0, borderRightColor: 'rgba(52,211,153,0.12)' }}>
+              <Text style={{ fontSize: 18, fontFamily: 'Inter_700Bold', color: colors.primary }}>{n}</Text>
+              <Text style={{ fontSize: 9, color: colors.textDim, fontFamily: 'Inter_400Regular' }}>{l}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={{ marginHorizontal: 16, marginTop: 14, padding: 14, backgroundColor: 'rgba(52,211,153,0.06)', borderWidth: 0.5, borderColor: 'rgba(52,211,153,0.12)', borderRadius: 14 }}>
+          <Text style={{ fontSize: 9, color: colors.textDim, fontFamily: 'Inter_700Bold', letterSpacing: 0.5, marginBottom: 8 }}>SAMPLE RECRUITER</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: colors.text }}>PS</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: colors.text }}>Priya Sharma</Text>
+              <Text style={{ fontSize: 10, color: colors.textMuted, fontFamily: 'Inter_400Regular' }}>Sr Recruiter at ████████</Text>
+            </View>
+            <Text style={{ fontSize: 8, color: colors.gold, backgroundColor: 'rgba(226,192,110,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, fontFamily: 'Inter_600SemiBold' }}>🔒</Text>
+          </View>
+        </View>
+
+        <View style={{ alignItems: 'center', marginTop: 24 }}>
+          <Text style={{ fontSize: 40, fontFamily: 'Inter_700Bold', color: colors.text }}>₹199<Text style={{ fontSize: 14, color: colors.textMuted, fontWeight: '400' }}>/mo</Text></Text>
+          <Text style={{ fontSize: 10, color: colors.textDim, marginTop: 4, fontFamily: 'Inter_400Regular' }}>Cancel anytime</Text>
+        </View>
+
+        <TouchableOpacity
+          onPress={handleSubscribe}
+          disabled={paying}
+          activeOpacity={0.85}
+          style={{ marginHorizontal: 16, marginTop: 16, backgroundColor: paying ? colors.cardBorder : colors.forest, borderRadius: 16, paddingVertical: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
+          {paying && <ActivityIndicator color="#FFFFFF" size="small" />}
+          <Text style={{ fontSize: 16, fontFamily: 'Inter_700Bold', color: '#FFFFFF' }}>{paying ? 'Processing…' : 'Get Pro Now →'}</Text>
+        </TouchableOpacity>
+
+        <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+          {['Unlimited recruiter contacts', 'Direct email & LinkedIn', 'AI CV Analyzer', 'Priority ranking'].map(f => (
+            <View key={f} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
+              <Text style={{ fontSize: 12, color: colors.primary }}>✓</Text>
+              <Text style={{ fontSize: 12, color: colors.textMuted, fontFamily: 'Inter_400Regular' }}>{f}</Text>
+            </View>
+          ))}
+        </View>
+
+        <Text style={{ textAlign: 'center', fontSize: 10, color: colors.textDim, marginTop: 24, fontFamily: 'Inter_400Regular' }}>Secure payment via Razorpay</Text>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}

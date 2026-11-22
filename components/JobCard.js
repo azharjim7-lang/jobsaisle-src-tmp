@@ -1,0 +1,178 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity } from 'react-native';
+import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { colors } from '../lib/colors';
+import { getFxRates, convertSalary, countryCurrency } from '../lib/currency';
+
+const BG = ['rgba(52,211,153,0.12)', 'rgba(226,192,110,0.12)', 'rgba(99,102,241,0.12)', 'rgba(244,114,182,0.12)', 'rgba(251,146,60,0.12)', 'rgba(56,189,248,0.12)'];
+const FG = ['#34D399', '#E2C06E', '#818cf8', '#f472b6', '#fb923c', '#38bdf8'];
+
+function timeAgo(d) {
+  if (!d) return '';
+  const ms = Date.now() - new Date(d).getTime();
+  const days = Math.floor(ms / 86400000);
+  if (days < 1) return 'Today';
+  if (days === 1) return '1d ago';
+  if (days < 7) return days + 'd ago';
+  if (days < 30) return Math.floor(days / 7) + 'w ago';
+  return Math.floor(days / 30) + 'mo ago';
+}
+
+let _userCurrencyCache = undefined;
+async function getUserCurrency() {
+  if (_userCurrencyCache !== undefined) return _userCurrencyCache;
+  try {
+    const u = await AsyncStorage.getItem('user');
+    if (!u) { _userCurrencyCache = null; return null; }
+    const cachedRaw = await AsyncStorage.getItem('ja:profile:v1');
+    if (cachedRaw) {
+      const parsed = JSON.parse(cachedRaw);
+      const p = parsed?.profile || parsed;
+      const city = p?.preferredCities?.[0];
+      const CITY_TO_COUNTRY = {
+        'Delhi': 'India', 'Mumbai': 'India', 'Bengaluru': 'India', 'Bangalore': 'India',
+        'Hyderabad': 'India', 'Chennai': 'India', 'Pune': 'India', 'Kolkata': 'India',
+        'Noida': 'India', 'Gurgaon': 'India', 'Ahmedabad': 'India',
+        'Dubai': 'United Arab Emirates', 'Abu Dhabi': 'United Arab Emirates',
+        'Riyadh': 'Saudi Arabia', 'Jeddah': 'Saudi Arabia',
+        'Doha': 'Qatar', 'Kuwait City': 'Kuwait', 'Manama': 'Bahrain', 'Muscat': 'Oman',
+      };
+      const country = city ? CITY_TO_COUNTRY[city] : null;
+      _userCurrencyCache = countryCurrency(country);
+      return _userCurrencyCache;
+    }
+    _userCurrencyCache = null;
+    return null;
+  } catch {
+    _userCurrencyCache = null;
+    return null;
+  }
+}
+
+
+// Compute a simple match score (0-100) based on user profile signals in AsyncStorage
+async function computeMatchScore(job) {
+  try {
+    const cachedRaw = await AsyncStorage.getItem('ja:profile:v1');
+    if (!cachedRaw) return null;
+    const parsed = JSON.parse(cachedRaw);
+    const profile = parsed?.profile || parsed;
+    if (!profile) return null;
+    let score = 40; // base
+    // Title match: +25 if user's title appears in job title
+    const userTitle = (profile.currentTitle || '').toLowerCase().trim();
+    const jobTitle = (job.title || '').toLowerCase();
+    if (userTitle && jobTitle.includes(userTitle)) score += 25;
+    else if (userTitle) {
+      const titleWords = userTitle.split(/\s+/).filter(w => w.length >= 3);
+      const hits = titleWords.filter(w => jobTitle.includes(w)).length;
+      score += Math.min(15, hits * 5);
+    }
+    // Skills match: +2 per matching skill (max +20)
+    const userSkills = (profile.skills || []).map(s => s.toLowerCase());
+    if (userSkills.length && (jobTitle || job.description)) {
+      const searchText = (jobTitle + ' ' + (job.description || '')).toLowerCase();
+      const hits = userSkills.filter(s => searchText.includes(s)).length;
+      score += Math.min(20, hits * 2);
+    }
+    // City match: +15
+    const prefCity = (profile.preferredCities || [])[0]?.toLowerCase();
+    if (prefCity && (job.city || '').toLowerCase() === prefCity) score += 15;
+    return Math.min(100, Math.round(score));
+  } catch { return null; }
+}
+
+export default function JobCard({ job, compact }) {
+  const router = useRouter();
+  const [converted, setConverted] = useState(null);
+  const [matchScore, setMatchScore] = useState(null);
+  const init = (job.company || '?')[0].toUpperCase();
+  const ci = init.charCodeAt(0) % 6;
+  const posted = timeAgo(job.postedDate);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [uc, fx] = await Promise.all([getUserCurrency(), getFxRates()]);
+      if (cancelled) return;
+      const c = convertSalary(job, uc, fx);
+      if (c) setConverted(c);
+    })();
+    return () => { cancelled = true; };
+  }, [job?.id]);
+
+  const hasSalary = job.salaryDisplay && job.salaryDisplay !== 'Competitive';
+
+  return (
+    <TouchableOpacity
+      onPress={() => router.push('/job/' + (job.slug || job.id))}
+      activeOpacity={0.7}
+      style={{
+        backgroundColor: colors.card,
+        borderWidth: 0.5,
+        borderColor: colors.cardBorder,
+        borderRadius: 14,
+        padding: compact ? 12 : 14,
+        marginBottom: 10,
+      }}>
+      {/* Top row: logo + (title + company) + timestamp */}
+      <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+        <View style={{
+          width: 40,
+          height: 40,
+          borderRadius: 10,
+          backgroundColor: BG[ci],
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', color: FG[ci] }}>{init}</Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+            <Text style={{ flex: 1, fontSize: 14, fontFamily: 'Inter_700Bold', color: colors.text, lineHeight: 18 }} numberOfLines={2}>
+              {job.title}
+            </Text>
+            <View style={{ alignItems: 'flex-end', gap: 4 }}>
+              {job.isApplied ? (
+                <View style={{ backgroundColor: 'rgba(59,130,246,0.2)', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 0.5, borderColor: 'rgba(59,130,246,0.4)' }}>
+                  <Text style={{ fontSize: 9, color: '#60a5fa', fontFamily: 'Inter_700Bold', letterSpacing: 0.4 }}>APPLIED</Text>
+                </View>
+              ) : null}
+              {matchScore !== null && matchScore >= 60 ? (
+                <View style={{ backgroundColor: matchScore >= 80 ? 'rgba(52,211,153,0.2)' : 'rgba(226,192,110,0.2)', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                  <Text style={{ fontSize: 9, color: matchScore >= 80 ? colors.primary : colors.gold, fontFamily: 'Inter_700Bold' }}>{matchScore}% match</Text>
+                </View>
+              ) : null}
+              {posted ? (
+                <Text style={{ fontSize: 10, color: colors.textDim, fontFamily: 'Inter_400Regular' }}>{posted}</Text>
+              ) : null}
+            </View>
+          </View>
+          <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 3, fontFamily: 'Inter_500Medium' }} numberOfLines={1}>
+            {job.company}{job.city ? ' · ' + job.city : ''}
+          </Text>
+          {job.description ? <Text style={{ fontSize: 11.5, color: colors.textDim, marginTop: 5, lineHeight: 16, fontFamily: 'Inter_400Regular' }} numberOfLines={2}>{String(job.description).replace(/\s+/g,' ').trim()}</Text> : null}
+        </View>
+      </View>
+
+      {/* Bottom row: salary chip + tags */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12, alignItems: 'center' }}>
+        {hasSalary ? (
+          <View style={{ backgroundColor: 'rgba(52,211,153,0.15)', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'Inter_700Bold' }}>{job.salaryDisplay}</Text>
+            {converted ? (
+              <Text style={{ fontSize: 10, color: colors.primary, fontFamily: 'Inter_500Medium', opacity: 0.7 }}>≈ {converted}</Text>
+            ) : null}
+          </View>
+        ) : null}
+        {job.jobType ? (
+          <Text style={{ fontSize: 10, color: colors.textMuted, backgroundColor: 'rgba(255,255,255,0.04)', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, fontFamily: 'Inter_500Medium', overflow: 'hidden' }}>{job.jobType}</Text>
+        ) : null}
+        {job.country && !job.city ? (
+          <Text style={{ fontSize: 10, color: colors.textDim, backgroundColor: 'rgba(255,255,255,0.04)', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, fontFamily: 'Inter_500Medium', overflow: 'hidden' }}>{job.country}</Text>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+}

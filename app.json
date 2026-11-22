@@ -1,0 +1,102 @@
+{
+  "expo": {
+    "name": "JobsAisle",
+    "slug": "jobsaisle",
+    "version": "1.0.35",
+    "orientation": "portrait",
+    "icon": "./assets/icon-new.png",
+    "userInterfaceStyle": "light",
+    "scheme": [
+      "jobsaisle",
+      "com.googleusercontent.apps.72311057833-lhosn2153sg0jvk5vl7mdrhv69vmdk33"
+    ],
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D2E23"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon-new.png",
+        "backgroundColor": "#FAF8F5"
+      },
+      "package": "com.jobsaisle.app",
+      "versionCode": 108,
+      "googleServicesFile": "./google-services.json",
+      "splash": {
+        "backgroundColor": "#0D2E23",
+        "image": "./assets/splash-icon.png",
+        "resizeMode": "contain"
+      },
+      "icon": "./assets/icon-new.png"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.jobsaisle.app",
+      "buildNumber": "68",
+      "splash": {
+        "backgroundColor": "#0D2E23",
+        "image": "./assets/splash-icon.png",
+        "resizeMode": "contain"
+      },
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "icon": "./assets/icon-new.png",
+      "usesAppleSignIn": true
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./node_modules/@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf",
+            "./node_modules/@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf",
+            "./node_modules/@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf",
+            "./node_modules/@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf"
+          ]
+        }
+      ],
+      "expo-secure-store",
+      "expo-web-browser",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.72311057833-12nu3gfergfeq5kcgbou7c64rbhn4284"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#0D9373"
+        }
+      ],
+      "expo-apple-authentication",
+      "expo-iap",
+      "expo-sharing"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "da0c282b-ac55-42f3-96be-5174f15b5a40"
+      },
+      "firebase": {
+        "apiKey": "AIzaSyBYy79Ub8T2VbgER7Nnpl3Y_NfTGW9bTp8",
+        "authDomain": "gulfxpert-bfb1d.firebaseapp.com",
+        "projectId": "gulfxpert-bfb1d",
+        "storageBucket": "gulfxpert-bfb1d.firebasestorage.app",
+        "messagingSenderId": "72311057833",
+        "appId": "1:72311057833:web:b4ceb8564adf88d82e68b8"
+      },
+      "googleAuth": {
+        "webClientId": "72311057833-33og2q72pvo4blak0kuuuih5dghlnljm.apps.googleusercontent.com",
+        "androidClientId": "72311057833-lhosn2153sg0jvk5vl7mdrhv69vmdk33.apps.googleusercontent.com",
+        "iosClientId": "72311057833-12nu3gfergfeq5kcgbou7c64rbhn4284.apps.googleusercontent.com"
+      },
+      "linkedInAuth": {
+        "clientId": "77t4m5pz5i1t93"
+      }
+    },
+    "owner": "jobsaisle.com"
+  }
+}

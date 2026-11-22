@@ -1,0 +1,95 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { colors } from '../lib/colors';
+
+const COMPANY_COLORS = [
+  ['rgba(99,102,241,0.18)', '#818cf8'],
+  ['rgba(244,114,182,0.18)', '#f472b6'],
+  ['rgba(56,189,248,0.18)', '#38bdf8'],
+  ['rgba(52,211,153,0.18)', '#34D399'],
+  ['rgba(251,146,60,0.18)', '#fb923c'],
+  ['rgba(168,85,247,0.18)', '#a855f7'],
+];
+
+export default function CompaniesScreen() {
+  const router = useRouter();
+  const [companies, setCompanies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('https://www.jobsaisle.com/api/companies?country=India&limit=100');
+        const d = await r.json();
+        setCompanies(d?.companies || []);
+      } catch (e) {}
+      setLoading(false);
+    })();
+  }, []);
+
+  const filtered = search.trim()
+    ? companies.filter(c => c.company.toLowerCase().includes(search.trim().toLowerCase()))
+    : companies;
+
+  const initials = (name) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: colors.text, lineHeight: 22, marginTop: -2, fontFamily: 'Inter_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, color: colors.text, fontFamily: 'Inter_700Bold' }}>Top Companies</Text>
+          <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 1, fontFamily: 'Inter_400Regular' }}>{companies.length} hiring across India</Text>
+        </View>
+      </View>
+
+      <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search a company..."
+          placeholderTextColor={colors.textDim}
+          style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 10, paddingHorizontal: 13, paddingVertical: 11, fontSize: 13, color: colors.text, fontFamily: 'Inter_400Regular', marginBottom: 8 }}
+        />
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+      ) : (
+        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+          {filtered.map((c, i) => {
+            const [bg, fg] = COMPANY_COLORS[i % COMPANY_COLORS.length];
+            return (
+              <TouchableOpacity
+                key={c.company}
+                onPress={() => router.push({ pathname: '/(tabs)/search', params: { query: c.company } })}
+                activeOpacity={0.7}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 11, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+                <View style={{ width: 42, height: 42, borderRadius: 10, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 13, color: fg, fontFamily: 'Inter_700Bold' }}>{initials(c.company)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={{ fontSize: 13, color: colors.text, fontFamily: 'Inter_600SemiBold' }}>{c.company}</Text>
+                  <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 2, fontFamily: 'Inter_400Regular' }}>
+                    {c.jobCount.toLocaleString()} open · {c.cityCount} {c.cityCount === 1 ? 'city' : 'cities'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 14, color: colors.textDim }}>›</Text>
+              </TouchableOpacity>
+            );
+          })}
+          {filtered.length === 0 && !loading && (
+            <Text style={{ textAlign: 'center', marginTop: 30, color: colors.textDim, fontSize: 12 }}>
+              {search ? `No companies match "${search}"` : 'No companies'}
+            </Text>
+          )}
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}

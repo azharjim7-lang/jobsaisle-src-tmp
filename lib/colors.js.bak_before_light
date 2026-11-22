@@ -1,0 +1,23 @@
+export const colors = {
+  // Background: dark (kept as-is)
+  bg: '#0C1410',
+  card: 'rgba(255,255,255,0.04)',
+  cardBorder: 'rgba(255,255,255,0.18)',
+  // Brand
+  primary: '#34D399',
+  primaryDark: '#0D9373',
+  gold: '#E2C06E',
+  white: '#FFFFFF',
+  // Text — brightened
+  text: '#FFFFFF',
+  textMuted: 'rgba(255,255,255,0.92)',
+  textDim: 'rgba(255,255,255,0.78)',
+  textGhost: 'rgba(255,255,255,0.65)',
+  // Inputs — more visible on dark bg
+  inputBg: 'rgba(255,255,255,0.12)',
+  inputBorder: 'rgba(255,255,255,0.32)',
+  // Social
+  google: '#FFFFFF',
+  linkedin: '#0A66C2',
+  red: '#FCA5A5',
+};

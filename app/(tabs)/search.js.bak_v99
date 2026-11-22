@@ -1,0 +1,403 @@
+import { useState, useRef, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Keyboard, ScrollView, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams } from 'expo-router';
+import { colors } from '../../lib/colors';
+import { fetchJobs, fetchSuggestions } from '../../lib/api';
+import JobCard from '../../components/JobCard';
+import { addAlert } from '../../lib/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fetchProfile } from '../../lib/profile';
+import { detectLocation } from '../../lib/geo';
+
+const POPULAR_ROLES = [
+  'Product Manager', 'Data Engineer', 'Sales Executive', 'Software Engineer',
+  'Marketing Manager', 'Accountant', 'Graphic Designer', 'Data Scientist',
+  'Business Development Executive', 'Social Media Manager',
+];
+const POPULAR_CITIES = [
+  'Delhi', 'Mumbai', 'Bengaluru', 'Hyderabad', 'Pune', 'Chennai', 'Noida', 'Gurgaon',
+];
+const POPULAR_COMPANIES = [
+  'Razorpay', 'Flipkart', 'Swiggy', 'Zomato', 'Paytm', 'PhonePe', 'TCS', 'Infosys',
+];
+
+export default function SearchScreen() {
+  const params = useLocalSearchParams();
+  const [role, setRole] = useState('');
+  const [company, setCompany] = useState('');
+  const [cityInput, setCityInput] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [results, setResults] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [page, setPage] = useState(1);
+  const [activeCategory, setActiveCategory] = useState('');
+  const [activeSector, setActiveSector] = useState('');
+  const [userSignals, setUserSignals] = useState(null);
+  const [activeFilters, setActiveFilters] = useState({});
+  const [recent, setRecent] = useState([]);
+
+  // Load user profile + recent searches on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const u = await AsyncStorage.getItem('user');
+        const parsed = u ? JSON.parse(u) : null;
+        const loc = await detectLocation();
+        let useCity = loc?.city || 'Delhi';
+        const useCountry = loc?.country || 'India';
+        const profile = parsed ? await fetchProfile(parsed.uid) : null;
+        const preferredCity = profile?.preferredCities?.[0];
+        if (preferredCity) useCity = preferredCity;
+        if (params?.preferredCity) useCity = String(params.preferredCity);
+        if (cancelled) return;
+        setUserSignals({
+          uid: parsed?.uid,
+          currentTitle: profile?.currentTitle,
+          skills: profile?.skills,
+          city: useCity,
+          country: useCountry,
+          preferredCities: profile?.preferredCities,
+        });
+        setCityInput(useCity);
+        const rs = await AsyncStorage.getItem('recentSearches');
+        if (rs) setRecent(JSON.parse(rs).slice(0, 5));
+      } catch (e) {
+        if (!cancelled) setUserSignals({ city: 'Delhi', country: 'India' });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Handle deep-link params from Industries / other screens (sector / category / query)
+  useEffect(() => {
+    if (!userSignals) return;
+    if (params?.sector || params?.query) {
+      const sector = params?.sector ? String(params.sector) : '';
+      const q = params?.query ? String(params.query) : '';
+      setActiveSector(sector);
+      if (q) setRole(q);
+      doSearchBySectorAndQuery(sector, q);
+    } else if (params?.category) {
+      const cat = String(params.category);
+      setActiveCategory(cat);
+      setRole(cat);
+      doSearchByCategory(cat);
+    }
+  }, [params?.category, params?.sector, params?.query, userSignals]);
+
+  const saveRecent = async (entry) => {
+    try {
+      const existing = JSON.parse((await AsyncStorage.getItem('recentSearches')) || '[]');
+      const updated = [entry, ...existing.filter(r => r.term !== entry.term)].slice(0, 10);
+      await AsyncStorage.setItem('recentSearches', JSON.stringify(updated));
+      setRecent(updated.slice(0, 5));
+    } catch {}
+  };
+
+  const clearRecent = async () => {
+    try { await AsyncStorage.removeItem('recentSearches'); setRecent([]); } catch {}
+  };
+
+  const doSearchBySectorAndQuery = async (sector, q) => {
+    Keyboard.dismiss();
+    setSuggestions([]);
+    setLoading(true);
+    setSearched(true);
+    try {
+      const fetchParams = { page: 1, limit: 20 };
+      if (sector) fetchParams.sector = sector;
+      if (q) fetchParams.search = q;
+      if (cityInput && cityInput.trim()) fetchParams.city = cityInput.trim();
+      if (userSignals) fetchParams.user = userSignals;
+      const d = await fetchJobs(fetchParams);
+      setResults(d.jobs || []);
+      setTotal(d.total || 0);
+      setPage(1);
+    } catch {}
+    setLoading(false);
+  };
+
+  const doSearchByCategory = async (cat) => {
+    Keyboard.dismiss();
+    setSuggestions([]);
+    setLoading(true);
+    setSearched(true);
+    try {
+      const d = await fetchJobs({ category: cat, page: 1, limit: 20, user: userSignals || undefined });
+      setResults(d.jobs || []);
+      setTotal(d.total || 0);
+      setPage(1);
+    } catch {}
+    setLoading(false);
+  };
+
+  const doSearch = async (p = 1) => {
+    const roleQ = role.trim();
+    const companyQ = company.trim();
+    if (!roleQ && !companyQ && !cityInput.trim()) return;
+    Keyboard.dismiss();
+    setSuggestions([]);
+    setLoading(true);
+    setSearched(true);
+    setActiveCategory('');
+    setActiveSector('');
+    try {
+      const fp = { page: p, limit: 20, user: userSignals || undefined };
+      if (roleQ) fp.search = roleQ;
+      if (companyQ) fp.company = companyQ;
+      if (cityInput && cityInput.trim()) fp.city = cityInput.trim();
+      // Apply filter chips
+      if (activeFilters.jobType) fp.jobType = activeFilters.jobType;
+      if (activeFilters.posted_within) fp.posted_within = activeFilters.posted_within;
+      if (activeFilters.min_salary) fp.min_salary = activeFilters.min_salary;
+      const d = await fetchJobs(fp);
+      if (p === 1) setResults(d.jobs || []);
+      else setResults(prev => [...prev, ...(d.jobs || [])]);
+      setTotal(d.total || 0);
+      setPage(p);
+      // Save to recent
+      if (p === 1) {
+        const displayTerm = [role, company, cityInput].filter(Boolean).join(' · ');
+        if (displayTerm) saveRecent({ role, company, location: cityInput, term: displayTerm, ts: Date.now() });
+      }
+    } catch {}
+    setLoading(false);
+  };
+
+  const loadMore = () => { if (results.length < total && !loading) doSearch(page + 1); };
+  const toggleFilter = (key, value) => {
+    setActiveFilters(prev => {
+      const next = { ...prev };
+      if (next[key] === value) delete next[key]; // toggle off
+      else next[key] = value;
+      return next;
+    });
+    // Re-run search on next frame after state update
+    setTimeout(() => doSearch(1), 0);
+  };
+
+  const onRoleType = async (text) => {
+    setRole(text);
+    if (text.length >= 2) {
+      const s = await fetchSuggestions(text);
+      setSuggestions(s.slice(0, 6));
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  const resetSearch = () => {
+    setSearched(false);
+    setResults([]);
+    setSuggestions([]);
+    setActiveCategory('');
+    setActiveSector('');
+  };
+
+  const Chip = ({ label, onPress, color = colors.textMuted, bg = colors.card }) => (
+    <TouchableOpacity onPress={onPress} style={{ backgroundColor: bg, borderWidth: 0.5, borderColor: colors.cardBorder, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 }}>
+      <Text style={{ fontSize: 12, color, fontFamily: 'DMSans_500Medium' }}>{label}</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      {!searched ? (
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 30 }}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
+            <Text style={{ fontSize: 22, color: colors.text, fontFamily: 'DMSans_700Bold' }}>Find your next role</Text>
+            <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 3, fontFamily: 'DMSans_400Regular' }}>Search by role, company, or location</Text>
+          </View>
+
+          {/* 3 inputs */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 8 }}>
+            <View style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 16 }}>💼</Text>
+              <TextInput
+                placeholder="Role or skill (e.g. Product Manager)"
+                placeholderTextColor={colors.textDim}
+                value={role}
+                onChangeText={onRoleType}
+                onSubmitEditing={() => doSearch()}
+                returnKeyType="next"
+                style={{ flex: 1, fontSize: 14, color: colors.text, fontFamily: 'DMSans_400Regular' }}
+              />
+              {role ? (<TouchableOpacity onPress={() => setRole('')}><Text style={{ fontSize: 14, color: colors.textDim }}>✕</Text></TouchableOpacity>) : null}
+            </View>
+            <View style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 16 }}>🏢</Text>
+              <TextInput
+                placeholder="Company (optional)"
+                placeholderTextColor={colors.textDim}
+                value={company}
+                onChangeText={setCompany}
+                onSubmitEditing={() => doSearch()}
+                returnKeyType="next"
+                style={{ flex: 1, fontSize: 14, color: colors.text, fontFamily: 'DMSans_400Regular' }}
+              />
+              {company ? (<TouchableOpacity onPress={() => setCompany('')}><Text style={{ fontSize: 14, color: colors.textDim }}>✕</Text></TouchableOpacity>) : null}
+            </View>
+            <View style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 16 }}>📍</Text>
+              <TextInput
+                placeholder="City (e.g. Delhi, Mumbai)"
+                placeholderTextColor={colors.textDim}
+                value={cityInput}
+                onChangeText={setCityInput}
+                onSubmitEditing={() => doSearch()}
+                returnKeyType="search"
+                style={{ flex: 1, fontSize: 14, color: colors.text, fontFamily: 'DMSans_400Regular' }}
+              />
+              {cityInput ? (<TouchableOpacity onPress={() => setCityInput('')}><Text style={{ fontSize: 14, color: colors.textDim }}>✕</Text></TouchableOpacity>) : null}
+            </View>
+            <TouchableOpacity onPress={() => doSearch()} style={{ marginTop: 4, backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
+              <Text style={{ fontSize: 15, color: colors.text, fontFamily: 'DMSans_700Bold' }}>🔍 Search jobs</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Suggestions while typing role */}
+          {suggestions.length > 0 && (
+            <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+              {suggestions.map((s, i) => (
+                <TouchableOpacity key={i} onPress={() => { setRole(s.text || s); setSuggestions([]); setTimeout(() => doSearch(), 50); }} style={{ paddingVertical: 11, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 13, color: colors.textMuted }}>🔍</Text>
+                  <Text style={{ fontSize: 14, color: colors.text, fontFamily: 'DMSans_400Regular' }}>{s.text || s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Recent searches */}
+          {recent.length > 0 && (
+            <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={{ fontSize: 13, color: colors.textMuted, fontFamily: 'DMSans_700Bold' }}>🕒 Recent searches</Text>
+                <TouchableOpacity onPress={clearRecent}><Text style={{ fontSize: 11, color: colors.textDim, fontFamily: 'DMSans_500Medium' }}>Clear</Text></TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {recent.map((r, i) => (
+                  <Chip key={i} label={r.term} onPress={() => { setRole(r.role || ''); setCompany(r.company || ''); setCityInput(r.location || ''); setTimeout(() => doSearch(), 50); }} />
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Popular roles */}
+          <View style={{ paddingHorizontal: 16, marginTop: 22 }}>
+            <Text style={{ fontSize: 13, color: colors.textMuted, fontFamily: 'DMSans_700Bold', marginBottom: 10 }}>📈 Popular roles</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {POPULAR_ROLES.map(r => <Chip key={r} label={r} onPress={() => setRole(r)} />)}
+            </View>
+          </View>
+
+          {/* Popular cities */}
+          <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
+            <Text style={{ fontSize: 13, color: colors.textMuted, fontFamily: 'DMSans_700Bold', marginBottom: 10 }}>📍 Popular cities</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {POPULAR_CITIES.map(c => <Chip key={c} label={c} onPress={() => setCityInput(c)} />)}
+            </View>
+          </View>
+
+          {/* Top companies */}
+          <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
+            <Text style={{ fontSize: 13, color: colors.textMuted, fontFamily: 'DMSans_700Bold', marginBottom: 10 }}>🏢 Top companies hiring</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {POPULAR_COMPANIES.map(c => <Chip key={c} label={c} onPress={() => setCompany(c)} />)}
+            </View>
+          </View>
+        </ScrollView>
+      ) : (
+        <>
+          {/* Results header with back-to-search */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity onPress={resetSearch} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 16, color: colors.text }}>‹</Text>
+              <Text style={{ fontSize: 13, color: colors.text, fontFamily: 'DMSans_600SemiBold' }}>New search</Text>
+            </TouchableOpacity>
+            {total > 0 && (
+              <TouchableOpacity onPress={async () => { const term = [role, company, cityInput].filter(Boolean).join(' · '); await addAlert({ query: term || activeSector || activeCategory, country: null, city: cityInput || null }); Alert.alert('Alert created', 'You\'ll be notified when new matching jobs appear.'); }}>
+                <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'DMSans_600SemiBold' }}>🔔 Save alert</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Active filter badges */}
+          {(activeSector || activeCategory) ? (
+            <View style={{ paddingHorizontal: 16, marginBottom: 6, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+              {activeSector ? (
+                <View style={{ backgroundColor: 'rgba(99,102,241,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 11, color: '#818cf8', fontFamily: 'DMSans_500Medium' }}>Sector: {activeSector}</Text>
+                </View>
+              ) : null}
+              {activeCategory ? (
+                <View style={{ backgroundColor: 'rgba(52,211,153,0.12)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'DMSans_500Medium' }}>Category: {activeCategory}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          {total > 0 && (
+            <View style={{ paddingHorizontal: 16, paddingBottom: 6 }}>
+              <Text style={{ fontSize: 11, color: colors.textDim, fontFamily: 'DMSans_400Regular' }}>{total.toLocaleString()} results</Text>
+            </View>
+          )}
+          {/* Filter chips */}
+          {searched ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 10, gap: 6 }} style={{ flexGrow: 0 }}>
+              {[
+                { key: 'posted_within', value: '7', label: 'Recent' },
+                { key: 'jobType', value: 'Full Time', label: 'Full-time' },
+                { key: 'jobType', value: 'Part Time', label: 'Part-time' },
+                { key: 'jobType', value: 'Contract', label: 'Contract' },
+                { key: 'min_salary', value: '1500000', label: '₹15L+' },
+                { key: 'min_salary', value: '500000', label: '₹5L+' },
+              ].map((chip, idx) => {
+                const isActive = activeFilters[chip.key] === chip.value;
+                return (
+                  <TouchableOpacity
+                    key={chip.key + '-' + idx}
+                    onPress={() => toggleFilter(chip.key, chip.value)}
+                    activeOpacity={0.7}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 14,
+                      backgroundColor: isActive ? colors.primary : 'rgba(255,255,255,0.06)',
+                      borderWidth: 0.5,
+                      borderColor: isActive ? colors.primary : 'rgba(255,255,255,0.18)',
+                      marginRight: 6,
+                    }}>
+                    <Text style={{ fontSize: 11, color: isActive ? '#fff' : colors.textMuted, fontFamily: 'DMSans_600SemiBold' }}>
+                      {chip.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : null}
+
+          {loading && page === 1 ? (
+            <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} size="large" />
+          ) : (
+            <FlatList
+              data={results}
+              keyExtractor={(j, i) => j.id + '-' + i}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+              renderItem={({ item }) => <JobCard job={item} compact />}
+              onEndReached={loadMore}
+              onEndReachedThreshold={0.5}
+              ListEmptyComponent={<Text style={{ textAlign: 'center', color: colors.textDim, marginTop: 40, fontFamily: 'DMSans_400Regular' }}>No results found</Text>}
+              ListFooterComponent={loading && page > 1 ? <ActivityIndicator color={colors.primary} style={{ paddingVertical: 20 }} /> : null}
+            />
+          )}
+        </>
+      )}
+    </SafeAreaView>
+  );
+}

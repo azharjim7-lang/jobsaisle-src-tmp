@@ -1,0 +1,447 @@
+import { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Loader from '../components/Loader';
+import { colors } from '../lib/colors';
+import { saveProfile, fetchProfile, clearProfileCache } from '../lib/profile';
+
+const COMMON_SKILLS = [
+  // Tech / Development
+  'Python','JavaScript','TypeScript','Java','C++','C#','PHP','Ruby','Go','Rust','Swift','Kotlin',
+  'React','Angular','Vue.js','Next.js','Node.js','Django','Flask','Spring Boot','Laravel','Express',
+  'HTML/CSS','Tailwind','Bootstrap','GraphQL','REST API','SQL','PostgreSQL','MySQL','MongoDB','Redis',
+  'AWS','Azure','GCP','Docker','Kubernetes','CI/CD','Jenkins','Git','Linux','DevOps',
+  // Data / AI
+  'Data Analysis','Data Science','Machine Learning','Deep Learning','TensorFlow','PyTorch','Pandas','NumPy',
+  'Power BI','Tableau','Looker','SAS','SPSS','R','Big Data','Hadoop','Spark','ETL','Data Engineering',
+  // Marketing
+  'Digital Marketing','SEO','SEM','Google Ads','Meta Ads','TikTok Ads','Performance Marketing','PPC',
+  'Content Marketing','Social Media','Email Marketing','Marketing Automation','HubSpot','Mailchimp','Marketo',
+  'Brand Management','Copywriting','Influencer Marketing','PR','Growth Hacking','Affiliate Marketing','Analytics','GA4',
+  // Sales & BD
+  'Sales','B2B Sales','B2C Sales','Inside Sales','Field Sales','Lead Generation','Cold Calling',
+  'Salesforce','HubSpot CRM','Account Management','Business Development','Negotiation','Pipeline Management',
+  // Finance / Accounting
+  'Accounting','Bookkeeping','Tally','QuickBooks','SAP','Oracle','Financial Modeling','Forecasting',
+  'Financial Analysis','Auditing','Taxation','GST','Compliance','Investment Banking','Equity Research',
+  'Risk Management','Treasury','M&A','Cost Accounting','MIS Reporting','Excel','Advanced Excel',
+  // HR & People Ops
+  'Recruitment','Talent Acquisition','HR Operations','HR Generalist','Payroll','HRIS','Workday','SAP HR',
+  'Employee Engagement','Performance Management','Compensation','L&D','OD','Onboarding','HR Analytics',
+  // Operations / Project / Strategy
+  'Project Management','Program Management','Agile','Scrum','Kanban','Jira','Asana','Trello',
+  'PMP','Six Sigma','Lean','Operations','Supply Chain','Logistics','Procurement','Vendor Management',
+  'Strategy','Consulting','Business Analysis','Business Process','PMO',
+  // Design & Product
+  'UI/UX Design','Figma','Adobe XD','Sketch','InVision','Photoshop','Illustrator','InDesign',
+  'Graphic Design','Product Design','Prototyping','User Research','Wireframing','Design Systems',
+  'Product Management','Roadmapping','Feature Prioritization','A/B Testing',
+  // Writing / Content
+  'Content Writing','Technical Writing','Editing','Proofreading','Blogging','Storytelling','Scriptwriting',
+  // Healthcare
+  'Patient Care','Nursing','Clinical Research','Pharmacy','Medical Coding','ICD-10','EMR','Public Health',
+  'Pharmaceutical Sales','Medical Devices','Biotechnology','Lab Operations',
+  // Legal
+  'Corporate Law','Contracts','Litigation','Compliance','IP Law','Legal Research','Due Diligence','GDPR',
+  // Education
+  'Teaching','Curriculum Design','Instructional Design','EdTech','LMS','Training Delivery','Coaching',
+  // Customer / Support
+  'Customer Service','Customer Success','Technical Support','Zendesk','Freshdesk','Voice Support','Chat Support',
+  // Manufacturing / Engineering
+  'AutoCAD','SolidWorks','MATLAB','Mechanical Design','Electrical','Civil','Production','Quality Control','QA','QC','ISO',
+  // Security
+  'Cybersecurity','Information Security','SOC','Penetration Testing','SIEM','ISO 27001','Network Security',
+  // Soft skills / general
+  'Communication','Leadership','Team Management','Problem Solving','Critical Thinking','Time Management',
+  'Public Speaking','Presentation','Stakeholder Management','Cross-functional Collaboration','Decision Making',
+  // Languages
+  'English','Hindi','Arabic','Spanish','French','German','Mandarin'
+];
+
+const CITIES = ['Bangalore','Mumbai','Delhi','Hyderabad','Pune','Chennai','Noida','Gurgaon','Dubai','Abu Dhabi','Riyadh','Doha','Remote'];
+
+const EXP_OPTIONS = ['0-1 yrs','1-3 yrs','3-5 yrs','5-8 yrs','8-12 yrs','12+ yrs'];
+
+export default function ProfileSetup() {
+  const [step, setStep] = useState(1);
+  const [user, setUser] = useState(null);
+  const [title, setTitle] = useState('');
+  const [titleSuggestions, setTitleSuggestions] = useState([]);
+  const [skills, setSkills] = useState([]);
+  const [roleSkills, setRoleSkills] = useState([]);
+  const [loadingRoleSkills, setLoadingRoleSkills] = useState(false);
+  const [skillInput, setSkillInput] = useState('');
+  const [exp, setExp] = useState(EXP_OPTIONS[1]);
+  const [cities, setCities] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const router = useRouter();
+
+  useEffect(() => {
+    (async () => {
+      const u = await AsyncStorage.getItem('user');
+      if (!u) { router.replace('/auth'); return; }
+      const parsed = JSON.parse(u);
+      setUser(parsed);
+      // Prefill from existing profile if any
+      const existing = await fetchProfile(parsed.uid);
+      if (existing) {
+        if (existing.currentTitle) setTitle(existing.currentTitle);
+        if (Array.isArray(existing.skills) && existing.skills.length > 0) setSkills(existing.skills);
+        if (existing.experience) setExp(existing.experience);
+        if (Array.isArray(existing.preferredCities) && existing.preferredCities.length > 0) setCities(existing.preferredCities);
+        // Jump to first incomplete step
+        if (!existing.currentTitle?.trim()) setStep(1);
+        else if (!Array.isArray(existing.skills) || existing.skills.length < 3) setStep(2);
+        else if (!existing.experience?.trim()) setStep(3);
+        else if (!Array.isArray(existing.preferredCities) || existing.preferredCities.length < 1) setStep(4);
+        else setStep(1); // already complete — let user review/edit from start
+      }
+    })();
+  }, []);
+
+  // Debounced title autocomplete via /api/suggest?type=headline
+  useEffect(() => {
+    const q = title.trim();
+    if (!q || q.length < 2) {
+      setTitleSuggestions([]);
+      return;
+    }
+    const tid = setTimeout(async () => {
+      try {
+        const res = await fetch('https://www.jobsaisle.com/api/suggest?type=headline&q=' + encodeURIComponent(q));
+        const data = await res.json();
+        // Dedupe + lowercase compare to filter near-matches
+        const dedup = [];
+        const seen = new Set();
+        for (const s of (data?.suggestions || [])) {
+          const norm = s.toLowerCase().trim();
+          if (!seen.has(norm) && norm !== q.toLowerCase()) {
+            seen.add(norm);
+            dedup.push(s);
+          }
+        }
+        setTitleSuggestions(dedup.slice(0, 6));
+      } catch {}
+    }, 250);
+    return () => clearTimeout(tid);
+  }, [title]);
+
+  // Fetch role-based skill suggestions when title is set (used in step 2)
+  useEffect(() => {
+    const t = title.trim();
+    if (!t || t.length < 2) { setRoleSkills([]); return; }
+    let cancelled = false;
+    setLoadingRoleSkills(true);
+    fetch('https://www.jobsaisle.com/api/skills/by-role?title=' + encodeURIComponent(t))
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const arr = Array.isArray(data?.skills) ? data.skills : [];
+        setRoleSkills(arr);
+      })
+      .catch(() => { if (!cancelled) setRoleSkills([]); })
+      .finally(() => { if (!cancelled) setLoadingRoleSkills(false); });
+    return () => { cancelled = true; };
+  }, [title]);
+
+  const addSkill = (s) => {
+    const v = (s || '').trim();
+    if (v && !skills.includes(v) && skills.length < 10) setSkills([...skills, v]);
+    setSkillInput('');
+  };
+
+  const removeSkill = (s) => setSkills(skills.filter(x => x !== s));
+
+  const toggleCity = (c) => {
+    if (cities.includes(c)) setCities(cities.filter(x => x !== c));
+    else if (cities.length < 5) setCities([...cities, c]);
+  };
+
+  const saveProgress = async () => {
+    if (!user?.uid) return;
+    const partial = {};
+    if (title.trim()) partial.currentTitle = title.trim();
+    if (skills.length > 0) partial.skills = skills;
+    if (exp) partial.experience = exp;
+    if (cities.length > 0) partial.preferredCities = cities;
+    if (Object.keys(partial).length === 0) return;
+    setSaving(true);
+    await saveProfile(user.uid, partial);
+    setSaving(false);
+  };
+
+  const next = async () => {
+    setError('');
+    if (step === 1 && !title.trim()) { setError('Enter your current role'); return; }
+    if (step === 2 && skills.length < 3) { setError('Add at least 3 skills'); return; }
+    await saveProgress();
+    if (step < 4) setStep(step + 1);
+  };
+
+  const finish = async () => {
+    setError('');
+    if (cities.length === 0) { setError('Pick at least one city'); return; }
+    setSaving(true);
+    const result = await saveProfile(user.uid, {
+      currentTitle: title.trim(),
+      skills,
+      experience: exp,
+      preferredCities: cities,
+    });
+    setSaving(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    router.replace('/(tabs)');
+  };
+
+  const skip = async () => {
+    await saveProgress();
+    router.replace('/(tabs)');
+  };
+
+  if (!user) return <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} />;
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <Loader visible={saving} title="Saving your profile" subtitle="Just a moment..." />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+
+          {/* Header */}
+          <View style={{ marginBottom: 16 }}>
+            <Text style={{ fontSize: 22, fontFamily: 'DMSans_700Bold', color: '#fff' }}>Complete your profile</Text>
+            <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 4, fontFamily: 'DMSans_400Regular' }}>
+              Step {step} of 4 · Helps us send you the best jobs
+            </Text>
+          </View>
+
+          {/* Progress */}
+          <View style={{ height: 5, backgroundColor: colors.cardBorder, borderRadius: 3, overflow: 'hidden', marginBottom: 24 }}>
+            <View style={{ height: '100%', width: (step * 25) + '%', backgroundColor: colors.primary }} />
+          </View>
+
+          {/* Step 1: current role */}
+          {step === 1 && (
+            <View>
+              <Text style={{ fontSize: 14, fontFamily: 'DMSans_600SemiBold', color: '#fff', marginBottom: 8 }}>What's your current role?</Text>
+              <TextInput
+                value={title}
+                onChangeText={setTitle}
+                placeholder="e.g. Senior Python Developer"
+                placeholderTextColor={colors.textDim}
+                autoFocus
+                style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 14, color: '#fff', fontFamily: 'DMSans_400Regular' }}
+              />
+
+              {/* Live suggestions from real job titles */}
+              {titleSuggestions.length > 0 ? (
+                <View style={{ marginTop: 8, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, overflow: 'hidden' }}>
+                  {titleSuggestions.map((s, i) => (
+                    <TouchableOpacity 
+                      key={s + i} 
+                      onPress={() => { setTitle(s); setTitleSuggestions([]); }}
+                      style={{ paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: i < titleSuggestions.length - 1 ? 0.5 : 0, borderBottomColor: colors.cardBorder }}>
+                      <Text style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_400Regular' }}>{s}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Quick popular roles when no input */}
+              {!title.trim() ? (
+                <View style={{ marginTop: 14 }}>
+                  <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8, fontFamily: 'DMSans_500Medium' }}>Popular roles:</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {['Software Engineer','Data Analyst','Marketing Manager','Sales Manager','Product Manager','HR Manager','Accountant','Business Analyst','Project Manager','UI/UX Designer','Content Writer','Customer Success Manager'].map(t => (
+                      <TouchableOpacity key={t} onPress={() => setTitle(t)} style={{ backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14 }}>
+                        <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>{t}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              <Text style={{ fontSize: 11, color: colors.textDim, marginTop: 12, fontFamily: 'DMSans_400Regular' }}>Or your most recent role if between jobs</Text>
+            </View>
+          )}
+
+          {/* Step 2: skills */}
+          {step === 2 && (
+            <View>
+              <Text style={{ fontSize: 14, fontFamily: 'DMSans_600SemiBold', color: '#fff', marginBottom: 6 }}>What are your top skills?</Text>
+              <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 12, fontFamily: 'DMSans_400Regular' }}>Add at least 3, up to 10 · {skills.length} added</Text>
+
+              {skills.length > 0 && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                  {skills.map(s => (
+                    <TouchableOpacity key={s} onPress={() => removeSkill(s)} style={{ backgroundColor: colors.primary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 12, color: colors.bg, fontFamily: 'DMSans_500Medium' }}>{s}</Text>
+                      <Text style={{ fontSize: 11, color: colors.bg, opacity: 0.6 }}>✕</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <TextInput
+                value={skillInput}
+                onChangeText={setSkillInput}
+                onSubmitEditing={() => addSkill(skillInput)}
+                returnKeyType="done"
+                placeholder="Search 200+ skills or add custom..."
+                placeholderTextColor={colors.textDim}
+                style={{ backgroundColor: colors.inputBg, borderWidth: 0.5, borderColor: colors.inputBorder, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 13, color: '#fff', fontFamily: 'DMSans_400Regular', marginBottom: 14 }}
+              />
+
+              {/* Role-recommended skills (only shown when no search query and we have suggestions for this title) */}
+              {!skillInput.trim() && roleSkills.length > 0 ? (
+                <>
+                  <Text style={{ fontSize: 11, color: colors.primary, marginBottom: 8, fontFamily: 'DMSans_600SemiBold' }}>
+                    Recommended for {title.trim()}:
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                    {roleSkills
+                      .filter(s => !skills.includes(s))
+                      .slice(0, 18)
+                      .map(s => (
+                        <TouchableOpacity key={'role-' + s} onPress={() => { addSkill(s); setSkillInput(''); }} style={{ backgroundColor: 'rgba(52,211,153,0.10)', borderWidth: 0.5, borderColor: 'rgba(52,211,153,0.35)', paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14 }}>
+                          <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'DMSans_500Medium' }}>+ {s}</Text>
+                        </TouchableOpacity>
+                      ))}
+                  </View>
+                </>
+              ) : null}
+
+              {!skillInput.trim() && loadingRoleSkills && roleSkills.length === 0 ? (
+                <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 10, fontFamily: 'DMSans_400Regular' }}>Loading suggestions for your role...</Text>
+              ) : null}
+
+              {/* General skills (filtered by skillInput as search query, or shown as fallback "Popular") */}
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 8, fontFamily: 'DMSans_500Medium' }}>
+                {skillInput.trim() ? 'Matches:' : (roleSkills.length > 0 ? 'More skills:' : 'Popular:')}
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {(() => {
+                  const q = skillInput.trim().toLowerCase();
+                  const alreadyRole = new Set(roleSkills.map(s => s.toLowerCase()));
+                  const filtered = COMMON_SKILLS
+                    .filter(s => !skills.includes(s))
+                    .filter(s => q || !alreadyRole.has(s.toLowerCase()))
+                    .filter(s => !q || s.toLowerCase().includes(q));
+                  const shown = q ? filtered.slice(0, 30) : filtered.slice(0, 24);
+                  return shown.map(s => (
+                    <TouchableOpacity key={s} onPress={() => { addSkill(s); setSkillInput(''); }} style={{ backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14 }}>
+                      <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>+ {s}</Text>
+                    </TouchableOpacity>
+                  ));
+                })()}
+              </View>
+              {/* Add custom skill button — when user typed something not in list */}
+              {skillInput.trim() && !COMMON_SKILLS.some(s => s.toLowerCase() === skillInput.trim().toLowerCase()) ? (
+                <TouchableOpacity 
+                  onPress={() => { addSkill(skillInput.trim()); setSkillInput(''); }} 
+                  style={{ alignSelf: 'flex-start', backgroundColor: 'rgba(52,211,153,0.12)', borderWidth: 0.5, borderColor: colors.primary, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14 }}>
+                  <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'DMSans_600SemiBold' }}>+ Add "{skillInput.trim()}"</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+
+          {/* Step 3: experience */}
+          {step === 3 && (
+            <View>
+              <Text style={{ fontSize: 14, fontFamily: 'DMSans_600SemiBold', color: '#fff', marginBottom: 12 }}>How many years of experience?</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {EXP_OPTIONS.map(e => {
+                  const selected = exp === e;
+                  return (
+                    <TouchableOpacity
+                      key={e}
+                      onPress={() => setExp(e)}
+                      style={{
+                        width: '31%',
+                        paddingVertical: 14,
+                        borderRadius: 12,
+                        borderWidth: 0.5,
+                        borderColor: selected ? colors.primary : colors.cardBorder,
+                        backgroundColor: selected ? 'rgba(52,211,153,0.12)' : colors.card,
+                        alignItems: 'center',
+                      }}>
+                      <Text style={{ fontSize: 13, color: selected ? colors.primary : colors.textMuted, fontFamily: 'DMSans_600SemiBold' }}>{e}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {/* Step 4: preferred cities */}
+          {step === 4 && (
+            <View>
+              <Text style={{ fontSize: 14, fontFamily: 'DMSans_600SemiBold', color: '#fff', marginBottom: 6 }}>Where do you want to work?</Text>
+              <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 14, fontFamily: 'DMSans_400Regular' }}>Pick up to 5 · {cities.length}/5 picked</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                {CITIES.map(c => {
+                  const selected = cities.includes(c);
+                  return (
+                    <TouchableOpacity
+                      key={c}
+                      onPress={() => toggleCity(c)}
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 9,
+                        borderRadius: 18,
+                        borderWidth: 0.5,
+                        borderColor: selected ? colors.primary : colors.cardBorder,
+                        backgroundColor: selected ? 'rgba(52,211,153,0.12)' : colors.card,
+                      }}>
+                      <Text style={{ fontSize: 12, color: selected ? colors.primary : colors.textMuted, fontFamily: 'DMSans_500Medium' }}>{c}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {error ? (
+            <Text style={{ color: colors.red, fontSize: 12, marginTop: 12, textAlign: 'center', fontFamily: 'DMSans_400Regular' }}>{error}</Text>
+          ) : null}
+
+          {/* Nav buttons */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 30 }}>
+            <TouchableOpacity
+              onPress={() => step > 1 && setStep(step - 1)}
+              disabled={step === 1}
+              style={{ paddingVertical: 12, paddingHorizontal: 4, opacity: step === 1 ? 0.3 : 1 }}>
+              <Text style={{ fontSize: 13, color: colors.textMuted, fontFamily: 'DMSans_500Medium' }}>← Back</Text>
+            </TouchableOpacity>
+
+            {step < 4 ? (
+              <TouchableOpacity
+                onPress={next}
+                style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12 }}>
+                <Text style={{ fontSize: 13, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>Next →</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={finish}
+                disabled={saving}
+                style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12, opacity: saving ? 0.6 : 1 }}>
+                <Text style={{ fontSize: 13, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>{saving ? 'Saving...' : 'Finish ✓'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Skip */}
+          <TouchableOpacity onPress={skip} style={{ alignSelf: 'center', marginTop: 24, padding: 8 }}>
+            <Text style={{ fontSize: 12, color: colors.textDim, fontFamily: 'DMSans_400Regular' }}>Skip for now →</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}

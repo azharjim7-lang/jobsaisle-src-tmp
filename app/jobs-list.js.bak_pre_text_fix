@@ -1,0 +1,184 @@
+import { useState, useEffect, useCallback } from 'react';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { colors } from '../lib/colors';
+import { fetchJobs } from '../lib/api';
+import { detectLocation } from '../lib/geo';
+import { fetchProfile, profileCompletion } from '../lib/profile';
+
+const TITLES = {
+  featured: 'Featured Jobs',
+  fresh: 'Hiring Fast',
+};
+
+const SUBTITLES = {
+  featured: 'Hand-picked roles from premium brands',
+  fresh: 'Companies actively hiring this week',
+};
+
+const COMPANY_COLORS = [
+  ['rgba(99,102,241,0.18)', '#818cf8'],
+  ['rgba(244,114,182,0.18)', '#f472b6'],
+  ['rgba(56,189,248,0.18)', '#38bdf8'],
+  ['rgba(52,211,153,0.18)', '#34D399'],
+  ['rgba(251,146,60,0.18)', '#fb923c'],
+  ['rgba(168,85,247,0.18)', '#a855f7'],
+];
+
+function colorForCompany(name) {
+  if (!name) return COMPANY_COLORS[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return COMPANY_COLORS[Math.abs(hash) % COMPANY_COLORS.length];
+}
+
+function formatSalary(min, max) {
+  if (!min && !max) return null;
+  const fmt = (n) => {
+    if (!n) return '';
+    if (n >= 100000) return '₹' + Math.round(n / 1000) + 'K';
+    return '₹' + n;
+  };
+  if (min && max) return fmt(min) + '–' + fmt(max);
+  return fmt(min || max) + '+';
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const ms = Date.now() - new Date(dateStr).getTime();
+  const d = Math.floor(ms / 86400000);
+  if (d <= 0) return 'today';
+  if (d < 7) return d + 'd';
+  return Math.floor(d / 7) + 'w';
+}
+
+export default function JobsList() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { type = 'featured' } = useLocalSearchParams();
+  const [jobs, setJobs] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState(null);
+  const completion = profileCompletion(profile);
+
+  useEffect(() => {
+    (async () => {
+      const loc = await detectLocation();
+      // Load user profile for personalization
+      let prof = null;
+      try {
+        const u = await AsyncStorage.getItem('user');
+        if (u) {
+          const parsed = JSON.parse(u);
+          prof = await fetchProfile(parsed.uid);
+          setProfile(prof);
+        }
+      } catch {}
+      const userSignals = {
+        currentTitle: prof?.currentTitle,
+        skills: prof?.skills,
+        city: loc?.city,
+        country: loc?.country,
+        preferredCities: prof?.preferredCities,
+      };
+      const result = await fetchJobs({
+        type,
+        country: loc?.country || 'India',
+        user: userSignals,
+        limit: 50,
+      });
+      setJobs(result?.jobs || []);
+      setTotal(result?.total || 0);
+      setLoading(false);
+    })();
+  }, [type]);
+
+  const renderItem = ({ item: job }) => {
+    const [bg, fg] = colorForCompany(job.company);
+    const ci = (job.company || '?')[0]?.toUpperCase();
+    return (
+      <TouchableOpacity
+        onPress={() => router.push('/job/' + job.slug)}
+        activeOpacity={0.8}
+        style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, padding: 12 }}>
+        <View style={{ flexDirection: 'row', gap: 11, alignItems: 'center', marginBottom: 8 }}>
+          <View style={{ width: 38, height: 38, borderRadius: 9, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 14, color: fg, fontFamily: 'DMSans_700Bold' }}>{ci}</Text>
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_600SemiBold' }}>{job.title}</Text>
+            <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textMuted, marginTop: 1, fontFamily: 'DMSans_400Regular' }}>{job.company}</Text>
+          </View>
+          {type === 'featured' && job.isFeatured ? (
+            <View style={{ backgroundColor: 'rgba(226,192,110,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 }}>
+              <Text style={{ fontSize: 8, color: colors.gold, fontFamily: 'DMSans_700Bold' }}>★</Text>
+            </View>
+          ) : null}
+          {type === 'fresh' && job.recent_count ? (
+            <View style={{ backgroundColor: 'rgba(52,211,153,0.12)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 }}>
+              <Text style={{ fontSize: 9, color: colors.primary, fontFamily: 'DMSans_700Bold' }}>{job.recent_count} this wk</Text>
+            </View>
+          ) : null}
+        </View>
+        <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 6, fontFamily: 'DMSans_400Regular' }}>📍 {job.city || job.location || 'Remote'}</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'DMSans_700Bold' }}>
+            {job.salaryDisplay || formatSalary(job.salaryMin, job.salaryMax) || 'Apply for details'}
+          </Text>
+          <Text style={{ fontSize: 10, color: colors.textDim, fontFamily: 'DMSans_400Regular' }}>{timeAgo(job.postedDate)}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const title = TITLES[type] || 'Jobs';
+  const subtitle = SUBTITLES[type] || '';
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 8, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: '#fff', lineHeight: 22, marginTop: -2, fontFamily: 'DMSans_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, color: '#fff', fontFamily: 'DMSans_700Bold' }}>{title}</Text>
+          {subtitle ? <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1, fontFamily: 'DMSans_400Regular' }}>{subtitle}</Text> : null}
+        </View>
+        {!loading && total > 0 ? (
+          <Text style={{ fontSize: 11, color: colors.textDim, fontFamily: 'DMSans_500Medium', paddingHorizontal: 8 }}>{total} roles</Text>
+        ) : null}
+      </View>
+
+      {/* Completion nudge banner (only when profile < 100%) */}
+      {!loading && completion < 100 ? (
+        <TouchableOpacity onPress={() => router.push('/profile-setup')} activeOpacity={0.85} style={{ marginHorizontal: 16, marginTop: 10, marginBottom: 4, backgroundColor: 'rgba(226,192,110,0.08)', borderWidth: 0.5, borderColor: 'rgba(226,192,110,0.25)', borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ fontSize: 11, color: colors.gold || '#E2C06E', flex: 1, fontFamily: 'DMSans_500Medium' }}>Complete profile for better matches</Text>
+          <Text style={{ fontSize: 11, color: colors.gold || '#E2C06E', fontFamily: 'DMSans_700Bold' }}>→</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {loading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : jobs.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Text style={{ fontSize: 13, color: colors.textMuted, fontFamily: 'DMSans_500Medium', marginBottom: 6 }}>No jobs found</Text>
+          <Text style={{ fontSize: 11, color: colors.textDim, fontFamily: 'DMSans_400Regular', textAlign: 'center' }}>Try adjusting filters or check back later</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={jobs}
+          keyExtractor={(j) => j.id || j.slug}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingTop: 12, paddingBottom: insets.bottom + 24 }}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
+    </SafeAreaView>
+  );
+}

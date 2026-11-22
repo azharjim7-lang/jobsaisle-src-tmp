@@ -1,0 +1,224 @@
+import { useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Loader from '../../components/Loader';
+import { colors } from '../../lib/colors';
+import { fetchProfile, profileCompletion, profileGaps } from '../../lib/profile';
+import { getMyApplications } from '../../lib/api';
+import { logOut } from '../../lib/firebase';
+import { getApplied, getSaved, getAlerts } from '../../lib/storage';
+
+export default function ProfileScreen() {
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [counts, setCounts] = useState({ applied: 0, saved: 0, alerts: 0 });
+  const router = useRouter();
+
+  useFocusEffect(useCallback(() => {
+    (async () => {
+      setLoading(true);
+      const u = await AsyncStorage.getItem('user');
+      const parsed = u ? JSON.parse(u) : null;
+      setUser(parsed);
+      if (parsed) {
+        const p = await fetchProfile(parsed.uid);
+        setProfile(p);
+        const [a, s, al] = await Promise.all([getApplied(), getSaved(), getAlerts()]);
+        // Show local counts instantly, then refresh applied from server
+        setCounts({ applied: a.length, saved: s.length, alerts: al.length });
+        // Server is source of truth for applied count
+        if (parsed?.uid) {
+          try {
+            const serverApps = await getMyApplications(parsed.uid);
+            if (Array.isArray(serverApps)) {
+              // Merge: use max count between local and server
+              const byId = new Set();
+              serverApps.forEach(x => byId.add(x.jobId));
+              a.forEach(x => byId.add(x.id));
+              setCounts(prev => ({ ...prev, applied: byId.size }));
+            }
+          } catch {}
+        }
+      } else {
+        // Logged out users shouldn't see this tab — redirect them
+        router.replace('/(tabs)');
+        return;
+      }
+      setLoading(false);
+    })();
+  }, []));
+
+  const completion = profileCompletion(profile);
+  const logout = async () => {
+    setLoggingOut(true);
+    await logOut();
+    await AsyncStorage.removeItem('user');
+    router.replace('/auth');
+  };
+
+  if (loading || !user) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={colors.primary} />
+      </SafeAreaView>
+    );
+  }
+
+  const initials = (user?.name || user?.email || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      <Loader visible={loggingOut} title="Signing out" subtitle="See you again soon" />
+      <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+        
+        {/* HEADER — premium feel: big avatar, name, title */}
+        <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 22, paddingHorizontal: 20 }}>
+          <View style={{ position: 'relative', marginBottom: 14 }}>
+            {/* Outer ring shows completion */}
+            <View style={{ width: 96, height: 96, borderRadius: 48, borderWidth: 2, borderColor: completion === 100 ? colors.gold : colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 84, height: 84, borderRadius: 42, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 32, fontFamily: 'DMSans_700Bold', color: colors.bg }}>{initials}</Text>
+              </View>
+            </View>
+            <View style={{ position: 'absolute', bottom: -6, right: -6, backgroundColor: colors.bg, borderRadius: 11, padding: 2 }}>
+              <View style={{ backgroundColor: completion === 100 ? colors.gold : colors.primary, paddingHorizontal: 9, paddingVertical: 3, borderRadius: 9 }}>
+                <Text style={{ fontSize: 10, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>{completion}%</Text>
+              </View>
+            </View>
+          </View>
+          <Text style={{ fontSize: 20, fontFamily: 'DMSans_700Bold', color: '#fff' }}>{user?.name || 'Welcome'}</Text>
+          <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 3, fontFamily: 'DMSans_400Regular' }}>{user?.email}</Text>
+          {profile?.currentTitle && (
+            <Text style={{ fontSize: 13, color: colors.primary, marginTop: 8, fontFamily: 'DMSans_600SemiBold' }}>{profile.currentTitle}</Text>
+          )}
+        </View>
+
+        {/* STATS ROW */}
+        <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 18 }}>
+          <TouchableOpacity onPress={() => router.push('/applied')} activeOpacity={0.85} style={{ flex: 1, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+            <Text style={{ fontSize: 22, color: '#fff', fontFamily: 'DMSans_700Bold' }}>{counts.applied}</Text>
+            <Text style={{ fontSize: 10, color: colors.textDim, marginTop: 2, fontFamily: 'DMSans_400Regular' }}>Applied</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/saved')} activeOpacity={0.85} style={{ flex: 1, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+            <Text style={{ fontSize: 22, color: '#fff', fontFamily: 'DMSans_700Bold' }}>{counts.saved}</Text>
+            <Text style={{ fontSize: 10, color: colors.textDim, marginTop: 2, fontFamily: 'DMSans_400Regular' }}>Saved</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/alerts')} activeOpacity={0.85} style={{ flex: 1, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+            <Text style={{ fontSize: 22, color: '#fff', fontFamily: 'DMSans_700Bold' }}>{counts.alerts}</Text>
+            <Text style={{ fontSize: 10, color: colors.textDim, marginTop: 2, fontFamily: 'DMSans_400Regular' }}>Alerts</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* PROFILE STRENGTH METER */}
+        {completion < 100 ? (
+          <View style={{ marginHorizontal: 16, marginBottom: 16, padding: 16, backgroundColor: 'rgba(226,192,110,0.08)', borderWidth: 0.5, borderColor: 'rgba(226,192,110,0.25)', borderRadius: 14 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_700Bold' }}>Profile strength</Text>
+              <Text style={{ fontSize: 13, color: colors.gold, fontFamily: 'DMSans_700Bold' }}>{completion}%</Text>
+            </View>
+            {/* Progress bar */}
+            <View style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
+              <View style={{ height: 6, width: completion + '%', backgroundColor: completion < 50 ? colors.gold : colors.primary, borderRadius: 3 }} />
+            </View>
+            <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 10, fontFamily: 'DMSans_400Regular' }}>
+              Complete your profile to get {100 - completion}% better matches
+            </Text>
+            {/* Action chips */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+              {profileGaps(profile).map((gap, i) => (
+                <TouchableOpacity
+                  key={i}
+                  onPress={() => router.push('/profile-setup')}
+                  activeOpacity={0.85}
+                  style={{ backgroundColor: 'rgba(226,192,110,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 0.5, borderColor: 'rgba(226,192,110,0.35)' }}>
+                  <Text style={{ fontSize: 11, color: colors.gold, fontFamily: 'DMSans_600SemiBold' }}>+25% {gap}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View style={{ marginHorizontal: 16, marginBottom: 16, padding: 14, backgroundColor: 'rgba(13,147,115,0.10)', borderWidth: 0.5, borderColor: 'rgba(13,147,115,0.30)', borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(13,147,115,0.20)', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 16 }}>✓</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, color: '#fff', fontFamily: 'DMSans_700Bold' }}>Profile complete</Text>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2, fontFamily: 'DMSans_400Regular' }}>You're set up for the best matches</Text>
+            </View>
+          </View>
+        )}
+
+        {/* YOUR PROFILE — editable card */}
+        <View style={{ marginHorizontal: 16, marginBottom: 16, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 14, padding: 16 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_700Bold', letterSpacing: 0.6 }}>YOUR PROFILE</Text>
+            <TouchableOpacity onPress={() => router.push('/profile-setup')}>
+              <Text style={{ fontSize: 12, color: colors.primary, fontFamily: 'DMSans_600SemiBold' }}>Edit</Text>
+            </TouchableOpacity>
+          </View>
+          {profile?.experience && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 7 }}>
+              <Text style={{ fontSize: 12, color: colors.textMuted, fontFamily: 'DMSans_400Regular' }}>Experience</Text>
+              <Text style={{ fontSize: 12, color: '#fff', fontFamily: 'DMSans_500Medium' }}>{profile.experience}</Text>
+            </View>
+          )}
+          {profile?.preferredCities?.length > 0 && (
+            <View style={{ paddingTop: 10, paddingBottom: 8, borderTopWidth: 0.5, borderTopColor: colors.cardBorder, marginTop: 4 }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 7, fontFamily: 'DMSans_400Regular' }}>Preferred cities</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                {profile.preferredCities.map(c => (
+                  <View key={c} style={{ backgroundColor: 'rgba(255,255,255,0.05)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7, alignSelf: 'flex-start' }}>
+                    <Text style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'DMSans_400Regular', lineHeight: 14 }}>{c}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+          {profile?.skills?.length > 0 && (
+            <View style={{ paddingTop: 10, paddingBottom: 4, borderTopWidth: 0.5, borderTopColor: colors.cardBorder }}>
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginBottom: 7, fontFamily: 'DMSans_400Regular' }}>Skills</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                {profile.skills.slice(0, 12).map(s => (
+                  <View key={s} style={{ backgroundColor: 'rgba(52,211,153,0.12)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7, alignSelf: 'flex-start' }}>
+                    <Text style={{ fontSize: 11, color: colors.primary, fontFamily: 'DMSans_500Medium', lineHeight: 14 }}>{s}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* JOBSAISLE PRO upgrade — gold themed */}
+        <TouchableOpacity onPress={() => router.push('/(tabs)/pro')} activeOpacity={0.9}
+          style={{ marginHorizontal: 16, marginBottom: 18, backgroundColor: '#0D2E23', borderWidth: 1, borderColor: 'rgba(226,192,110,0.35)', borderRadius: 16, padding: 16 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ fontSize: 10, color: colors.gold, letterSpacing: 1.4, fontFamily: 'DMSans_700Bold' }}>✦ JOBSAISLE PRO</Text>
+            <Text style={{ fontSize: 11, color: colors.gold, fontFamily: 'DMSans_500Medium' }}>From ₹199/mo</Text>
+          </View>
+          <Text style={{ fontSize: 16, color: '#fff', fontFamily: 'DMSans_700Bold', marginBottom: 6 }}>Unlock the recruiter network</Text>
+          <Text style={{ fontSize: 12, color: colors.textMuted, fontFamily: 'DMSans_400Regular', marginBottom: 14, lineHeight: 17 }}>16K+ verified hiring manager contacts. CV Analyzer. Unlimited alerts.</Text>
+          <View style={{ backgroundColor: colors.gold, paddingVertical: 10, borderRadius: 10, alignItems: 'center' }}>
+            <Text style={{ fontSize: 13, color: colors.bg, fontFamily: 'DMSans_700Bold' }}>Start 7-day trial →</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Settings + logout */}
+        <View style={{ marginHorizontal: 16, marginBottom: 12, backgroundColor: colors.card, borderWidth: 0.5, borderColor: colors.cardBorder, borderRadius: 12, overflow: 'hidden' }}>
+          <TouchableOpacity onPress={() => router.push('/menu')} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 13, gap: 10 }}>
+            <Text style={{ fontSize: 15 }}>☰</Text>
+            <Text style={{ flex: 1, fontSize: 13, color: '#fff', fontFamily: 'DMSans_500Medium' }}>More — Industries, Companies, Insights</Text>
+            <Text style={{ fontSize: 14, color: colors.textDim }}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity onPress={logout} style={{ alignItems: 'center', paddingVertical: 16 }}>
+          <Text style={{ fontSize: 12, color: colors.red, fontFamily: 'DMSans_500Medium' }}>Log out</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}

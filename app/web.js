@@ -1,0 +1,45 @@
+import { useState } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { colors } from '../lib/colors';
+
+export default function WebScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams();
+  const [loading, setLoading] = useState(true);
+
+  const path = params?.path || '/';
+  const title = params?.title || 'JobsAisle';
+  const url = 'https://www.jobsaisle.com' + (typeof path === 'string' ? path : '/');
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 8, borderBottomWidth: 0.5, borderBottomColor: colors.cardBorder }}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 20, color: colors.text, lineHeight: 22, marginTop: -2, fontFamily: 'Inter_500Medium' }}>‹</Text>
+        </TouchableOpacity>
+        <Text numberOfLines={1} style={{ flex: 1, fontSize: 15, color: colors.text, fontFamily: 'Inter_700Bold' }}>{title}</Text>
+      </View>
+
+      {/* Loading overlay */}
+      {loading ? (
+        <View style={{ position: 'absolute', top: 60, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>
+          <ActivityIndicator color={colors.primary} size="large" />
+        </View>
+      ) : null}
+
+      <WebView
+        source={{ uri: url }}
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        onLoadEnd={() => setLoading(false)}
+        startInLoadingState={true}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+      />
+    </SafeAreaView>
+  );
+}
